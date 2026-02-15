@@ -1,0 +1,16 @@
+NeuralPath is a smart website that helps people understand their career value. It looks at a person's resume
+Home Page: This is the first thing users see. it explains that the site uses high-tech tools to help their careers.
+Login/Signup: Users create an account (called a "Neural Node") with a username and password to keep their information safe.
+Upload Page: Users click a button to upload their resume file (like a PDF).
+Scanning Page: While the computer reads the resume, the user sees a cool "scanning" animation. This makes the site feel advanced.
+Dashboard (The Report): This is the final page. It shows:
+Strengths: What the user is great at.
+Weaknesses: What the user needs to improve.
+Opportunities: Better jobs they could get.
+Risks: If their job might be replaced by AI in the future.
+The Tools Used (Tech Stack)
+The Look (Frontend): I used HTML, CSS, and JavaScript. This makes the site look dark and futuristic, like a high-tech lab.
+The Brain (Backend): The site is built to work with Python. Python is used to read the resume and understand the words.
+The AI: The system connects to powerful AI models (like GPT or Gemini) to give career advice.
+The Storage (Database): I use MySQL or PostgreSQL to save the user's account and their career reports.
+Most resume tools only check for spelling. This tool actually thinks like a career coach. it helps users stay ahead of the competition and get higher-paying jobs.
