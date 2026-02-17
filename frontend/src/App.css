@@ -1,0 +1,115 @@
+body {
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  background: linear-gradient(135deg, #fdfbfb, #ebedee);
+}
+
+.container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.card {
+  background: white;
+  padding: 40px;
+  width: 400px;
+  border-radius: 15px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+input {
+  margin: 15px 0;
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+}
+
+button {
+  background: #6c63ff;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+button:hover {
+  background: #5848e5;
+}
+/* Dashboard container */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px;
+  background: linear-gradient(135deg, #fdfbfb, #ebedee);
+  min-height: 100vh;
+}
+
+/* Upload card */
+.upload-card {
+  background: white;
+  padding: 30px;
+  border-radius: 15px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  width: 500px;
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+/* ATS circle */
+.ats-circle {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: conic-gradient(#6c63ff 0deg, #eee 0deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 20px;
+  margin: 20px auto;
+  transition: background 1s ease-out; /* smooth transition */
+}
+
+
+/* Job recommendations list */
+.job-list {
+  text-align: left;
+  margin-top: 20px;
+}
+
+.job-list li {
+  margin-bottom: 8px;
+}
+
+/* Resume preview box */
+.resume-preview {
+  background: #f7f7f7;
+  padding: 15px;
+  border-radius: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  margin-top: 15px;
+  text-align: left;
+}
+
+/* Download button */
+.download-btn {
+  margin-top: 20px;
+  padding: 10px 20px;
+  background: #6c63ff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.download-btn:hover {
+  background: #5848e5;
+}
