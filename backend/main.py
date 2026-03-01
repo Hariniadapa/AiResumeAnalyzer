@@ -16,10 +16,10 @@ from auth import register_user, login_user
 from schema import User
 from utils import SECRET_KEY, ALGORITHM
 from resume_logic import enhance_resume
-from database import engine
-from models import Base
-from database import get_db
 from sqlalchemy.orm import Session
+from datetime import datetime
+from models import Base, ResumeHistory
+from database import engine, get_db
 
 
 
@@ -65,7 +65,14 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # frontend URL
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175"
+    ],  # expanded frontend URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -126,53 +133,76 @@ def login(user: User, db: Session = Depends(get_db)):
 @app.post("/upload/")
 async def upload_resume(
     file: UploadFile = File(...),
-    user: str = Depends(get_current_user)
+    user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     try:
+        if not os.path.exists("uploads"):
+            os.makedirs("uploads")
+
         contents = await file.read()
+        temp_path = f"temp_{file.filename}"
 
         # Save temporarily
-        with open("temp.pdf", "wb") as f:
+        with open(temp_path, "wb") as f:
             f.write(contents)
 
-        # Extract text
-        with open("temp.pdf", "rb") as f:
-            resume_text = extract_text_from_pdf(f)
+        # Use the logic from resume_logic.py
+        from resume_logic import analyze_resume_with_ai
+        result = analyze_resume_with_ai(temp_path)
 
-        # Trim long resumes
-        resume_text = resume_text[:1500]
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
-        # ---------- SIMPLE SUMMARY ----------
-        lines = resume_text.split("\n")
-        summary = " ".join(lines[:5])
+        # Save to History
+        now = datetime.now()
+        history_entry = ResumeHistory(
+            user_email=user,
+            filename=file.filename,
+            upload_date=now.strftime("%Y-%m-%d"),
+            upload_time=now.strftime("%H:%M:%S"),
+            ats_score=result.get("ats_score", 0),
+            job_recommendation_summary=", ".join([j.get("title", "") for j in result.get("job_recommendations", [])[:3]]),
+            report_filename=result.get("report_filename", "")
+        )
+        db.add(history_entry)
+        db.commit()
 
-        # ---------- SKILL KEYWORDS ----------
-        keywords = ["python", "java", "react", "node", "sql", "machine learning", "html", "css"]
-        found_skills = [word for word in keywords if word in resume_text.lower()]
-
-        # ---------- ATS SCORE ----------
-        ats_score = min(len(found_skills) * 12, 100)
-
-        # ---------- JOB RECOMMENDATION ----------
-        if "react" in resume_text.lower():
-            job = "Frontend Developer"
-        elif "python" in resume_text.lower():
-            job = "Python Developer"
-        elif "machine learning" in resume_text.lower():
-            job = "ML Engineer"
-        else:
-            job = "Software Developer"
-
-        return {
-            "summary": summary,
-            "ats_score": ats_score,
-            "job_recommendation": job,
-            "skills_found": found_skills
-        }
+        return result
 
     except Exception as e:
         print("ERROR:", e)
-        return {"error": "AI processing failed"}
+        return {"error": f"AI processing failed: {str(e)}"}
+
+
+@app.get("/upload-history/")
+def get_upload_history(
+    user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    history = db.query(ResumeHistory).filter(ResumeHistory.user_email == user).all()
+    return history
+
+
+@app.delete("/delete-history/{history_id}")
+def delete_history(
+    history_id: int,
+    user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    entry = db.query(ResumeHistory).filter(ResumeHistory.id == history_id, ResumeHistory.user_email == user).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="History item not found")
+    
+    # Optionally delete the report file
+    report_path = os.path.join("uploads", entry.report_filename)
+    if os.path.exists(report_path):
+        os.remove(report_path)
+
+    db.delete(entry)
+    db.commit()
+    return {"message": "History item deleted"}
 
 
 
