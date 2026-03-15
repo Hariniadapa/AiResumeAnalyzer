@@ -4,14 +4,7 @@ from PyPDF2 import PdfReader
 from docx import Document
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-from openai import OpenAI
-
-from dotenv import load_dotenv
-load_dotenv()
-
-# Initialize OpenAI client
-# It will automatically use the OPENAI_API_KEY environment variable.
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from ai_engine import ai_engine
 
 # ==============================
 # Extract Text
@@ -110,21 +103,21 @@ def analyze_with_openai(text):
     """
     
     try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that outputs only JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
+        content = ai_engine.generate_content(
+            prompt=prompt,
+            system_instruction="You are a helpful assistant that outputs only JSON.",
+            json_mode=True
         )
-        content = response.choices[0].message.content.strip()
+        content = content.strip()
         
         # Remove markdown if accidentally added
         if content.startswith("```json"):
             content = content[7:-3]
             
-        return json.loads(content)
+        result = json.loads(content)
+        if "summary" not in result or "ats_score" not in result:
+            raise ValueError("JSON response missing expected 'summary' or 'ats_score' field.")
+        return result
     except Exception as e:
         print(f"OpenAI API Error: {e}")
         
@@ -267,15 +260,12 @@ def enhance_resume(text):
     {text[:2000]}
     """
     try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful top-tier resume reviewer."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
+        content = ai_engine.generate_content(
+            prompt=prompt,
+            system_instruction="You are a helpful top-tier resume reviewer.",
+            json_mode=False
         )
-        content = response.choices[0].message.content.strip()
+        content = content.strip()
         # Split into list
         return [line.strip("- *").strip() for line in content.split("\n") if line.strip()]
     except Exception as e:
@@ -384,5 +374,6 @@ def analyze_resume_with_ai(file_path):
         "formatting_suggestions": formatting_suggestions,
         "keyword_optimization": keyword_optimization,
         "industry_suggestions": industry_suggestions,
-        "report_filename": os.path.basename(report_filename)
+        "report_filename": os.path.basename(report_filename),
+        "resume_text": resume_text
     }

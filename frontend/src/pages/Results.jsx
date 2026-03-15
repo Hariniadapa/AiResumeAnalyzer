@@ -20,6 +20,10 @@ function Results() {
             return;
         }
 
+        if (data.resume_text) {
+            localStorage.setItem("resume_text", data.resume_text);
+        }
+
         const targetScore = data.ats_score || 0;
         const targetBreakdown = data.score_breakdown || {
             skills: 50, experience: 50, keywords: 50, formatting: 50, grammar: 50
@@ -292,6 +296,34 @@ function Results() {
                                 ))}
                             </div>
                         )}
+                    </div>
+
+                    {/* AI Assistants */}
+                    <div style={styles.summaryGlassCard} className="glass-card-hover">
+                        <h3 style={styles.cardSectionTitle}>Take the Next Step with AI <span style={styles.neonIcon}>🚀</span></h3>
+                        <div style={styles.assistantGrid}>
+                            <button style={styles.assistantBtn} className="btn-glow hover-lift" onClick={() => navigate("/interview")}>
+                                <div style={styles.assistantIcon}>🎙️</div>
+                                <div style={{ textAlign: "left" }}>
+                                    <div style={styles.assistantBtnTitle}>Generate Interview Questions</div>
+                                    <div style={styles.assistantBtnDesc}>Practice personalized technical and HR questions</div>
+                                </div>
+                            </button>
+                            <button style={styles.assistantBtn} className="btn-glow hover-lift" onClick={() => navigate("/chat")}>
+                                <div style={styles.assistantIcon}>💬</div>
+                                <div style={{ textAlign: "left" }}>
+                                    <div style={styles.assistantBtnTitle}>Career Mentor Chatbot</div>
+                                    <div style={styles.assistantBtnDesc}>Ask what skills to learn next or how to improve</div>
+                                </div>
+                            </button>
+                            <button style={styles.assistantBtn} className="btn-glow hover-lift" onClick={() => navigate("/edit")}>
+                                <div style={styles.assistantIcon}>✍️</div>
+                                <div style={{ textAlign: "left" }}>
+                                    <div style={styles.assistantBtnTitle}>Resume Editing Assistant</div>
+                                    <div style={styles.assistantBtnDesc}>AI-driven edits to fix weak or redundant sentences</div>
+                                </div>
+                            </button>
+                        </div>
                     </div>
 
                     {/* Download & History */}
@@ -755,6 +787,43 @@ const styles = {
     detailItem: {
         marginBottom: "8px",
         lineHeight: "1.4",
+    },
+    assistantGrid: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+        gap: "20px",
+        marginTop: "10px",
+    },
+    assistantBtn: {
+        background: "rgba(15, 23, 42, 0.6)",
+        border: "1px solid rgba(168, 127, 251, 0.2)",
+        borderRadius: "16px",
+        padding: "20px",
+        display: "flex",
+        alignItems: "center",
+        gap: "15px",
+        cursor: "pointer",
+        color: "#ffffff",
+        transition: "all 0.3s ease",
+        height: "100%",
+    },
+    assistantIcon: {
+        fontSize: "30px",
+        background: "rgba(168, 127, 251, 0.1)",
+        padding: "12px",
+        borderRadius: "12px",
+    },
+    assistantBtnTitle: {
+        fontSize: "16px",
+        fontWeight: "700",
+        marginBottom: "5px",
+        color: "#a87ffb",
+    },
+    assistantBtnDesc: {
+        fontSize: "13px",
+        color: "#94a3b8",
+        lineHeight: "1.4",
+        margin: 0,
     },
     neonIcon: {
         fontSize: "18px",

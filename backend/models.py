@@ -20,3 +20,14 @@ class ResumeHistory(Base):
     ats_score = Column(Integer)
     job_recommendation_summary = Column(String)
     report_filename = Column(String)
+
+class JobPosting(Base):
+    __tablename__ = "job_postings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_name = Column(String)
+    job_title = Column(String)
+    job_location = Column(String)
+    job_url = Column(String)
+    job_description = Column(String)
+    posted_date = Column(String)

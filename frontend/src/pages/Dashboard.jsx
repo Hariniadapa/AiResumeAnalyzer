@@ -49,6 +49,12 @@ function Dashboard() {
 
       if (!response.ok) {
         setIsAnalyzing(false);
+        if (response.status === 401) {
+          localStorage.removeItem("token");
+          alert("Your session has expired. Please login again to continue.");
+          window.location.href = "/login";
+          return;
+        }
         alert(data.detail || "Upload failed");
         return;
       }
@@ -78,13 +84,22 @@ function Dashboard() {
         <div style={styles.header}>
           <h1 style={styles.title} className="typing-effect">AI Resume Engine <span style={styles.badgeSparkle}>✨</span></h1>
           <p style={styles.subtitle}>Unlock your career potential with intelligent insights</p>
-          <button
-            className="btn-glow"
-            style={styles.historyShortcut}
-            onClick={() => navigate("/upload-history")}
-          >
-            View My History
-          </button>
+          <div style={{ display: 'flex', gap: '15px', justifyContent: 'center' }}>
+            <button
+              className="btn-glow"
+              style={styles.historyShortcut}
+              onClick={() => navigate("/upload-history")}
+            >
+              View My History
+            </button>
+            <button
+              className="btn-glow"
+              style={{ ...styles.historyShortcut, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', color: '#60a5fa' }}
+              onClick={() => navigate("/jobs")}
+            >
+              Job Center 🚀
+            </button>
+          </div>
         </div>
 
         {/* Upload Section */}

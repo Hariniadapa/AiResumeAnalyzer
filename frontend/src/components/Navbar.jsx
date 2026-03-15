@@ -10,6 +10,18 @@ const Navbar = () => {
                     ResumeAI Pro
                 </div>
                 <div style={styles.navLinks}>
+                    <button style={styles.navBtn} onClick={() => navigate("/dashboard")}>
+                        Dashboard
+                    </button>
+                    <button style={styles.navBtn} onClick={() => navigate("/jobs")}>
+                        Job Center
+                    </button>
+                    <button style={styles.navBtn} onClick={() => navigate("/interview")}>
+                        Interview Prep
+                    </button>
+                    <button style={styles.navBtn} onClick={() => navigate("/chat")}>
+                        AI Mentor
+                    </button>
                     <button style={styles.loginBtn} onClick={() => navigate("/login")}>
                         Login
                     </button>
@@ -59,6 +71,16 @@ const styles = {
     navLinks: {
         display: "flex",
         gap: "15px",
+    },
+    navBtn: {
+        background: "transparent",
+        border: "none",
+        color: "#94a3b8",
+        fontSize: "15px",
+        fontWeight: "600",
+        cursor: "pointer",
+        transition: "color 0.2s ease",
+        padding: "10px",
     },
     loginBtn: {
         padding: "10px 24px",

@@ -10,7 +10,7 @@ from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+from jose import jwt, JWTError, ExpiredSignatureError
 
 from auth import register_user, login_user
 from schema import User
@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from models import Base, ResumeHistory
 from database import engine, get_db
-
+from job_service import JobService
+from ai_services import AIServices
 
 
 import PyPDF2
@@ -99,6 +100,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
         return email
 
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -246,3 +249,102 @@ def enhance_resume_endpoint(
     suggestions = enhance_resume(text)
 
     return {"suggestions": suggestions}
+# ==============================
+# RESUME EDITING ASSISTANT
+# ==============================
+@app.post("/resume/edit-suggestions/")
+def get_edit_suggestions(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    resume_text = data.get("resume_text")
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Resume text is required")
+    service = AIServices(db)
+    return service.generate_editing_suggestions(resume_text)
+
+@app.post("/resume/generate-bullet/")
+def generate_bullet(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    sentence = data.get("sentence")
+    if not sentence:
+        raise HTTPException(status_code=400, detail="Sentence is required")
+    service = AIServices(db)
+    return service.generate_bullet_point(sentence)
+
+@app.post("/resume/parse-sections/")
+def parse_sections(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    resume_text = data.get("resume_text")
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Resume text is required")
+    service = AIServices(db)
+    return service.parse_resume_to_sections(resume_text)
+
+@app.post("/resume/skill-gap/")
+def skill_gap(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    resume_text = data.get("resume_text")
+    target_role = data.get("target_role", "Software Engineer")
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Resume text is required")
+    service = AIServices(db)
+    return service.detect_skill_gaps(resume_text, target_role)
+
+@app.post("/resume/rewrite-section/")
+def rewrite_section(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    text = data.get("text")
+    mode = data.get("mode", "professional")
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    service = AIServices(db)
+    return service.rewrite_section(text, mode)
+
+@app.post("/resume/ats-score/")
+def ats_score(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    resume_text = data.get("resume_text")
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Resume text is required")
+    service = AIServices(db)
+    return service.calculate_ats_score(resume_text)
+
+# ==============================
+# JOB MANAGEMENT
+# ==============================
+
+@app.post("/jobs/scrape/")
+def scrape_jobs(query: str = "Software Engineer", db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    service = JobService(db)
+    return service.scrape_and_store_jobs(query)
+
+@app.post("/jobs/recommend/")
+def recommend_jobs(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    service = JobService(db)
+    resume_text = data.get("resume_text")
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Resume text is required")
+    return service.match_resume_to_jobs(resume_text)
+
+@app.get("/jobs/trends/")
+def get_job_trends(db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    service = JobService(db)
+    return service.get_market_trends()
+
+# ==============================
+# INTERVIEW PREPARATION MODULE
+# ==============================
+@app.post("/interview/generate/")
+def generate_interview(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    resume_text = data.get("resume_text")
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Resume text is required")
+    service = AIServices(db)
+    return service.generate_interview_questions(resume_text)
+
+# ==============================
+# AI CAREER MENTOR CHATBOT
+# ==============================
+@app.post("/chat/")
+def mentor_chat(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    message = data.get("message")
+    resume_text = data.get("resume_text", "")
+    chat_history = data.get("chat_history", [])
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+    service = AIServices(db)
+    resume_data = {"resume_text": resume_text}
+    return service.chat_with_mentor(message, resume_data, chat_history)
