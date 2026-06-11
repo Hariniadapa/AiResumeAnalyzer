@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 import AIParticles from "../components/AIParticles";
 import Navbar from "../components/Navbar";
 
@@ -36,13 +37,13 @@ function Results() {
             setAnimatedScore(start);
 
             // Proportional animation for breakdown scores
-            setAnimatedBreakdown(prev => ({
+            setAnimatedBreakdown({
                 skills: Math.min(Math.round((start / targetScore) * targetBreakdown.skills), targetBreakdown.skills),
                 experience: Math.min(Math.round((start / targetScore) * targetBreakdown.experience), targetBreakdown.experience),
                 keywords: Math.min(Math.round((start / targetScore) * targetBreakdown.keywords), targetBreakdown.keywords),
                 formatting: Math.min(Math.round((start / targetScore) * targetBreakdown.formatting), targetBreakdown.formatting),
                 grammar: Math.min(Math.round((start / targetScore) * targetBreakdown.grammar), targetBreakdown.grammar),
-            }));
+            });
 
             if (start >= targetScore) clearInterval(interval);
         }, 15);
@@ -55,7 +56,7 @@ function Results() {
     const token = localStorage.getItem("token");
 
     const handleDownload = () => {
-        fetch(`http://127.0.0.1:8000/download-report/${data.report_filename}`, {
+        fetch(`${API_BASE_URL}/download-report/${data.report_filename}`, {
             headers: { Authorization: `Bearer ${token}` },
         })
             .then((res) => res.blob())

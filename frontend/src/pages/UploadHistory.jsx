@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import AIParticles from "../components/AIParticles";
 import Navbar from "../components/Navbar";
+import { API_BASE_URL } from "../config/api";
 
 function UploadHistory() {
     const [history, setHistory] = useState([]);
@@ -13,11 +14,12 @@ function UploadHistory() {
 
     useEffect(() => {
         fetchHistory();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const fetchHistory = async () => {
         try {
-            const response = await fetch("http://127.0.0.1:8000/upload-history/", {
+            const response = await fetch(`${API_BASE_URL}/upload-history/`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             if (response.ok) {
@@ -34,7 +36,7 @@ function UploadHistory() {
     const handleDelete = async (id) => {
         if (!window.confirm("Are you sure you want to delete this history item?")) return;
         try {
-            const response = await fetch(`http://127.0.0.1:8000/delete-history/${id}`, {
+            const response = await fetch(`${API_BASE_URL}/delete-history/${id}`, {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${token}` },
             });

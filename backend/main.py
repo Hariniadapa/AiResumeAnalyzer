@@ -2,349 +2,255 @@
 # IMPORTS
 # ==============================
 import os
-import json
-import pdfplumber
+from datetime import datetime
+
 from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError, ExpiredSignatureError
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from auth import register_user, login_user
 from schema import User
-from utils import SECRET_KEY, ALGORITHM
-from resume_logic import enhance_resume
-from sqlalchemy.orm import Session
-from datetime import datetime
+from resume_logic import analyze_resume_with_ai
 from models import Base, ResumeHistory
 from database import engine, get_db
+from dependencies import get_current_user
+
 from job_service import JobService
-from ai_services import AIServices
-
-
-import PyPDF2
-
-def extract_text_from_pdf(file):
-    reader = PyPDF2.PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text()
-    return text
-
+from job_ingestion_service import JobIngestionService
+from routes.ai_routes import router as ai_router
 
 
 # ==============================
-# LOAD ENV VARIABLES
-# ==============================
-load_dotenv()
-
-
-
-# ==============================
-# CREATE FASTAPI APP
+# APP INIT (MUST BE FIRST)
 # ==============================
 app = FastAPI()
 
 
-
 # ==============================
-# CREATE DATABASE TABLES
+# CORS (ONLY ONCE)
 # ==============================
-Base.metadata.create_all(bind=engine)
-
-
-
-# ==============================
-# CORS CONFIGURATION
-# ==============================
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173"
-]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173", 
+        "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
         "http://localhost:5175",
-        "http://127.0.0.1:5175"
-    ],  # expanded frontend URLs
+        "http://127.0.0.1:5175",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+# ==============================
+# DB INIT
+# ==============================
+Base.metadata.create_all(bind=engine)
+
+# Dynamic Schema Migration to avoid manual drops
+try:
+    with engine.begin() as conn:
+        # Check and add resume_text to resume_history
+        try:
+            conn.execute(text("ALTER TABLE resume_history ADD COLUMN resume_text VARCHAR"))
+            print("[DB Migration] Added resume_text to resume_history ✅")
+        except Exception:
+            pass  # Already exists or not supported
+        
+        # Check and add all possible missing columns to job_postings
+        columns_to_check = ["salary", "skills", "source", "job_url", "posted_date", "duration", "job_type"]
+        for col in columns_to_check:
+            try:
+                conn.execute(text(f"ALTER TABLE job_postings ADD COLUMN {col} VARCHAR"))
+                print(f"[DB Migration] Added {col} to job_postings ✅")
+            except Exception:
+                pass
+except Exception as migration_err:
+    print(f"[DB Migration WARN] Migration checks skipped/failed: {migration_err}")
+
+app.include_router(ai_router)
+
 
 # ==============================
-# AUTH CONFIG
+# STARTUP (SAFE FIX)
 # ==============================
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-
-# ==============================
-# JWT HELPER
-# ==============================
-def get_current_user(token: str = Depends(oauth2_scheme)):
+@app.on_event("startup")
+def startup():
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
-
-        if email is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        return email
-
-    except ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(
+            func=lambda: JobIngestionService().run_ingestion(),
+            trigger=IntervalTrigger(hours=6),
+            id="job_ingestion",
+            replace_existing=True,
+        )
+        scheduler.start()
+        print("[OK] Scheduler started")
+    except Exception as e:
+        print("[WARN] Scheduler failed:", e)
 
 
 # ==============================
-# ROOT ROUTE
+# ROOT
 # ==============================
 @app.get("/")
 def home():
-    return {"message": "AI Resume Analyzer Backend Running 🚀"}
+    return {"message": "AI Resume Backend Running 🚀"}
 
 
 # ==============================
-# REGISTER
+# AUTH ROUTES
 # ==============================
 @app.post("/register/")
 def register(user: User, db: Session = Depends(get_db)):
     return register_user(user, db)
 
 
-# ==============================
-# LOGIN
-# ==============================
 @app.post("/login/")
 def login(user: User, db: Session = Depends(get_db)):
     return login_user(user, db)
 
-# ==============================
-# UPLOAD & ANALYZE RESUME
-# ==============================
 
+# ==============================
+# UPLOAD RESUME
+# ==============================
 @app.post("/upload/")
 async def upload_resume(
     file: UploadFile = File(...),
     user: str = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     try:
-        if not os.path.exists("uploads"):
-            os.makedirs("uploads")
+        os.makedirs("uploads", exist_ok=True)
 
         contents = await file.read()
         temp_path = f"temp_{file.filename}"
 
-        # Save temporarily
         with open(temp_path, "wb") as f:
             f.write(contents)
 
-        # Use the logic from resume_logic.py
-        from resume_logic import analyze_resume_with_ai
         result = analyze_resume_with_ai(temp_path)
 
-        # Clean up temp file
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-        # Save to History
         now = datetime.now()
-        history_entry = ResumeHistory(
-            user_email=user,
-            filename=file.filename,
-            upload_date=now.strftime("%Y-%m-%d"),
-            upload_time=now.strftime("%H:%M:%S"),
-            ats_score=result.get("ats_score", 0),
-            job_recommendation_summary=", ".join([j.get("title", "") for j in result.get("job_recommendations", [])[:3]]),
-            report_filename=result.get("report_filename", "")
+
+        db.add(
+            ResumeHistory(
+                user_email=user,
+                filename=file.filename,
+                upload_date=now.strftime("%Y-%m-%d"),
+                upload_time=now.strftime("%H:%M:%S"),
+                ats_score=result.get("ats_score", 0),
+                job_recommendation_summary=", ".join(
+                    [j.get("title", "") for j in result.get("job_recommendations", [])[:3]]
+                ),
+                report_filename=result.get("report_filename", ""),
+                resume_text=result.get("resume_text", ""),
+            )
         )
-        db.add(history_entry)
         db.commit()
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
-        print("ERROR:", e)
-        return {"error": f"AI processing failed: {str(e)}"}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==============================
+# HISTORY
+# ==============================
 @app.get("/upload-history/")
-def get_upload_history(
-    user: str = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    history = db.query(ResumeHistory).filter(ResumeHistory.user_email == user).all()
-    return history
+def history(user: str = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(ResumeHistory).filter_by(user_email=user).all()
 
 
+# ==============================
+# DELETE HISTORY
+# ==============================
 @app.delete("/delete-history/{history_id}")
 def delete_history(
     history_id: int,
     user: str = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    entry = db.query(ResumeHistory).filter(ResumeHistory.id == history_id, ResumeHistory.user_email == user).first()
+    entry = db.query(ResumeHistory).filter_by(
+        id=history_id,
+        user_email=user
+    ).first()
+
     if not entry:
-        raise HTTPException(status_code=404, detail="History item not found")
-    
-    # Optionally delete the report file
-    report_path = os.path.join("uploads", entry.report_filename)
-    if os.path.exists(report_path):
-        os.remove(report_path)
+        raise HTTPException(status_code=404, detail="Not found")
+
+    file_path = os.path.join("uploads", entry.report_filename)
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
     db.delete(entry)
     db.commit()
-    return {"message": "History item deleted"}
 
-
-
-
-
+    return {"message": "deleted"}
 
 
 # ==============================
 # DOWNLOAD REPORT
 # ==============================
 @app.get("/download-report/{filename}")
-def download_report(
-    filename: str,
-    user: str = Depends(get_current_user)
-):
-    file_path = os.path.join("uploads", filename)
+def download(filename: str, user: str = Depends(get_current_user)):
+    path = os.path.join("uploads", filename)
 
-    if os.path.exists(file_path):
-        return FileResponse(
-            path=file_path,
-            media_type="application/pdf",
-            filename=filename
-        )
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Not found")
 
-    raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, media_type="application/pdf", filename=filename)
 
 
 # ==============================
-# AI RESUME ENHANCEMENT
+# JOB RECOMMENDATION & SEARCH ENDPOINTS
 # ==============================
-@app.post("/enhance-resume/")
-def enhance_resume_endpoint(
-    data: dict,
-    user: str = Depends(get_current_user)
-):
-    text = data.get("text")
+@app.get("/jobs/trends/")
+def get_trends(db: Session = Depends(get_db), user: str = Depends(get_current_user)):
+    return JobService(db).get_market_trends()
 
-    if not text:
-        raise HTTPException(status_code=400, detail="No resume text provided")
-
-    suggestions = enhance_resume(text)
-
-    return {"suggestions": suggestions}
-# ==============================
-# RESUME EDITING ASSISTANT
-# ==============================
-@app.post("/resume/edit-suggestions/")
-def get_edit_suggestions(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    resume_text = data.get("resume_text")
-    if not resume_text:
-        raise HTTPException(status_code=400, detail="Resume text is required")
-    service = AIServices(db)
-    return service.generate_editing_suggestions(resume_text)
-
-@app.post("/resume/generate-bullet/")
-def generate_bullet(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    sentence = data.get("sentence")
-    if not sentence:
-        raise HTTPException(status_code=400, detail="Sentence is required")
-    service = AIServices(db)
-    return service.generate_bullet_point(sentence)
-
-@app.post("/resume/parse-sections/")
-def parse_sections(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    resume_text = data.get("resume_text")
-    if not resume_text:
-        raise HTTPException(status_code=400, detail="Resume text is required")
-    service = AIServices(db)
-    return service.parse_resume_to_sections(resume_text)
-
-@app.post("/resume/skill-gap/")
-def skill_gap(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    resume_text = data.get("resume_text")
-    target_role = data.get("target_role", "Software Engineer")
-    if not resume_text:
-        raise HTTPException(status_code=400, detail="Resume text is required")
-    service = AIServices(db)
-    return service.detect_skill_gaps(resume_text, target_role)
-
-@app.post("/resume/rewrite-section/")
-def rewrite_section(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    text = data.get("text")
-    mode = data.get("mode", "professional")
-    if not text:
-        raise HTTPException(status_code=400, detail="Text is required")
-    service = AIServices(db)
-    return service.rewrite_section(text, mode)
-
-@app.post("/resume/ats-score/")
-def ats_score(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    resume_text = data.get("resume_text")
-    if not resume_text:
-        raise HTTPException(status_code=400, detail="Resume text is required")
-    service = AIServices(db)
-    return service.calculate_ats_score(resume_text)
-
-# ==============================
-# JOB MANAGEMENT
-# ==============================
 
 @app.post("/jobs/scrape/")
 def scrape_jobs(query: str = "Software Engineer", db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    service = JobService(db)
-    return service.scrape_and_store_jobs(query)
+    return JobService(db).scrape_and_store_jobs(query)
+
 
 @app.post("/jobs/recommend/")
 def recommend_jobs(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    service = JobService(db)
-    resume_text = data.get("resume_text")
+    resume_text = data.get("resume_text", "").strip()
+    
+    # Auto-load latest resume text if none is sent by frontend
     if not resume_text:
-        raise HTTPException(status_code=400, detail="Resume text is required")
-    return service.match_resume_to_jobs(resume_text)
-
-@app.get("/jobs/trends/")
-def get_job_trends(db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    service = JobService(db)
-    return service.get_market_trends()
-
-# ==============================
-# INTERVIEW PREPARATION MODULE
-# ==============================
-@app.post("/interview/generate/")
-def generate_interview(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    resume_text = data.get("resume_text")
+        latest = db.query(ResumeHistory).filter_by(user_email=user).order_by(ResumeHistory.id.desc()).first()
+        if latest and latest.resume_text:
+            resume_text = latest.resume_text
+            print(f"[Jobs Recommend] Loaded resume text from history for user {user}")
+            
     if not resume_text:
-        raise HTTPException(status_code=400, detail="Resume text is required")
-    service = AIServices(db)
-    return service.generate_interview_questions(resume_text)
+        # Return empty list to prevent downstream exceptions with empty string
+        return []
 
-# ==============================
-# AI CAREER MENTOR CHATBOT
-# ==============================
-@app.post("/chat/")
-def mentor_chat(data: dict, db: Session = Depends(get_db), user: str = Depends(get_current_user)):
-    message = data.get("message")
-    resume_text = data.get("resume_text", "")
-    chat_history = data.get("chat_history", [])
-    if not message:
-        raise HTTPException(status_code=400, detail="Message is required")
-    service = AIServices(db)
-    resume_data = {"resume_text": resume_text}
-    return service.chat_with_mentor(message, resume_data, chat_history)
+    return JobService(db).match_resume_to_jobs(
+        resume_text=resume_text,
+        location=data.get("location", None),
+        skills=data.get("skills", None),
+        experience_level=data.get("experience_level", None)
+    )
+

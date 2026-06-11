@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import AIParticles from "../components/AIParticles";
 import ReactMarkdown from "react-markdown";
-import { Send, User, Bot, Sparkles, Trash2, ArrowLeft, BrainCircuit, Lightbulb, Code, BookOpen } from "lucide-react";
+import { Send, User, Bot, Sparkles, Trash2, BrainCircuit, Lightbulb, Code, BookOpen, UserCheck, MessageSquare } from "lucide-react";
+import toast from "react-hot-toast";
+import { API_BASE_URL } from "../config/api";
 
 function AIChatbot() {
+    const navigate = useNavigate();
+    const token = localStorage.getItem("token");
     const [resumeText, setResumeText] = useState(localStorage.getItem("resume_text") || "");
     const [chatHistory, setChatHistory] = useState(() => {
         const saved = localStorage.getItem("chat_history");
@@ -19,6 +24,13 @@ function AIChatbot() {
     };
 
     useEffect(() => {
+        if (!token) {
+            navigate("/login");
+            return;
+        }
+    }, [token, navigate]);
+
+    useEffect(() => {
         scrollToBottom();
         localStorage.setItem("chat_history", JSON.stringify(chatHistory));
     }, [chatHistory]);
@@ -27,9 +39,9 @@ function AIChatbot() {
         const msgToSend = typeof customMessage === 'string' ? customMessage : message;
         if (!msgToSend.trim()) return;
 
-        const token = localStorage.getItem("token");
         if (!token) {
-            alert("Please login first");
+            toast.error("Please login first");
+            navigate("/login");
             return;
         }
 
@@ -39,7 +51,7 @@ function AIChatbot() {
         setIsLoading(true);
 
         try {
-            const response = await fetch("http://127.0.0.1:8000/chat/", {
+            const response = await fetch(`${API_BASE_URL}/chat/`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -58,31 +70,33 @@ function AIChatbot() {
             } else {
                 if (response.status === 401) {
                     localStorage.removeItem("token");
-                    alert("Your session has expired. Please login again to continue.");
-                    window.location.href = "/login";
+                    toast.error("Your session has expired. Please login again.");
+                    navigate("/login");
                 } else {
                     setChatHistory([...newHistory, { role: "assistant", content: "### ⚠️ Error\nSorry, I had trouble processing that request. " + (data.detail || "Please try again later.") }]);
                 }
             }
         } catch (err) {
             console.error(err);
-            setChatHistory([...newHistory, { role: "assistant", content: "### 🔌 Connection Error\nI'm having trouble reaching the mentor service. Please check your internet connection or try again later." }]);
+            setChatHistory([...newHistory, { role: "assistant", content: "### 🔌 Connection Error\nI'm having trouble reaching the mentor service. Please check your connection." }]);
         }
         setIsLoading(false);
     };
 
     const clearChat = () => {
-        if (window.confirm("Are you sure you want to clear the chat history?")) {
-            setChatHistory([]);
-            localStorage.removeItem("chat_history");
-        }
+        if (chatHistory.length === 0) return;
+        setChatHistory([]);
+        localStorage.removeItem("chat_history");
+        toast.success("Chat history cleared");
     };
 
     const chatStarters = [
-        { label: "Improve my resume", icon: <BrainCircuit size={16} />, query: "Can you analyze my resume and suggest 3 high-impact improvements?" },
-        { label: "Skill roadmap", icon: <Lightbulb size={16} />, query: "Based on my background, what are the top 3 skills I should learn next to increase my market value?" },
-        { label: "Interview tips", icon: <Code size={16} />, query: "What are the most common technical interview questions for someone with my experience?" },
-        { label: "Project ideas", icon: <BookOpen size={16} />, query: "Suggest a portfolio project that would showcase my current skills while helping me learn something new." }
+        { label: "Improve my resume", icon: <BrainCircuit size={16} />, query: "Can you analyze my resume and suggest 3 high-impact improvements with specific before/after bullet point examples?" },
+        { label: "Skill roadmap", icon: <Lightbulb size={16} />, query: "Based on my background, give me a detailed 12-week learning roadmap for the top 3 skills I should develop to maximize my market value. Include specific resources for each week." },
+        { label: "Interview prep", icon: <Code size={16} />, query: "What are the 5 most commonly asked technical interview questions for someone with my experience? Include the ideal answer framework for each." },
+        { label: "Project ideas", icon: <BookOpen size={16} />, query: "Suggest 3 portfolio projects tailored to my skills that would impress a FAANG recruiter. For each, describe the tech stack, key features, and how to present it." },
+        { label: "Salary negotiation", icon: <UserCheck size={16} />, query: "What is a fair salary range for my experience level and skills? Give me a step-by-step negotiation script I can use in my next offer discussion." },
+        { label: "Career roadmap", icon: <Sparkles size={16} />, query: "Based on my current background, design a 2-year career growth roadmap with specific milestones, skills to acquire, and roles to target at each stage." },
     ];
 
     return (
@@ -91,85 +105,133 @@ function AIChatbot() {
             <AIParticles />
 
             <div style={styles.container}>
-                <div style={styles.header}>
-                    <div style={styles.titleWrapper}>
-                        <h1 style={styles.title}>AI Career Mentor <span style={styles.sparkle}><Sparkles fill="#fcd34d" color="#fcd34d" /></span></h1>
-                    </div>
-                    <div style={styles.statusBadge}>
-                        <div style={styles.statusDot}></div>
-                        <span>AI Engine Active (Heuristic Fallback Enabled)</span>
-                    </div>
-                    <p style={styles.subtitle}>Your personal guide to career growth and professional success</p>
-                </div>
-
                 <div style={styles.layout}>
-                    {/* Left: Settings/Context */}
+                    
+                    {/* Left Sidebar Panel */}
                     <div style={styles.sidebar}>
                         <div style={styles.sidebarHeader}>
-                            <h3 style={styles.cardSectionTitle}>Resume Context</h3>
+                            <MessageSquare size={20} color="#a87ffb" />
+                            <h3 style={styles.sidebarTitle}>AI Career Mentor</h3>
                         </div>
-                        <p style={styles.hint}>The mentor uses this text to personalize your advice.</p>
-                        <textarea
-                            style={styles.textarea}
-                            className="subtle-scrollbar"
-                            placeholder="Paste your resume text here for better context..."
-                            value={resumeText}
-                            onChange={(e) => {
-                                setResumeText(e.target.value);
-                                localStorage.setItem("resume_text", e.target.value);
-                            }}
-                        />
+                        
+                        <div style={styles.sidebarContent}>
+                            <div style={styles.contextGroup}>
+                                <label style={styles.sidebarLabel}>Resume Context</label>
+                                <p style={styles.hint}>The AI Mentor customizes its answers and recommendations using this context.</p>
+                                <textarea
+                                    style={styles.textarea}
+                                    className="subtle-scrollbar"
+                                    placeholder="Paste your resume text here for personalized FAANG coaching..."
+                                    value={resumeText}
+                                    onChange={(e) => {
+                                        setResumeText(e.target.value);
+                                        localStorage.setItem("resume_text", e.target.value);
+                                    }}
+                                />
+                            </div>
+
+                            <div style={styles.shortcutsGroup}>
+                                <label style={styles.sidebarLabel}>Quick Prompts</label>
+                                <div style={styles.shortcutsList}>
+                                    {chatStarters.map((starter, i) => (
+                                        <button
+                                            key={i}
+                                            style={styles.shortcutBtn}
+                                            onClick={() => handleSend(starter.query)}
+                                        >
+                                            {starter.icon}
+                                            <span>{starter.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
                         <div style={styles.sidebarFooter}>
                             <button 
-                                style={styles.clearBtn} 
+                                style={chatHistory.length > 0 ? styles.clearBtnActive : styles.clearBtn} 
                                 onClick={clearChat}
-                                className="clear-btn-hover"
+                                disabled={chatHistory.length === 0}
                             >
                                 <Trash2 size={16} /> Clear Conversation
                             </button>
                         </div>
                     </div>
 
-                    {/* Right: Chat View */}
+                    {/* Right Chat Area */}
                     <div style={styles.chatArea} className="glass-card-hover">
-                        <div style={styles.messagesContainer} className="subtle-scrollbar">
-                            {chatHistory.length === 0 && (
-                                <div style={styles.welcomeView}>
-                                    <div style={styles.welcomeIcon}><Bot size={48} color="#3b82f6" /></div>
-                                    <h2 style={styles.welcomeTitle}>Hello! I'm your AI Mentor.</h2>
-                                    <p style={styles.welcomeText}>How can I help you advance your career today?</p>
+                        <div style={styles.chatHeader}>
+                            <div style={styles.headerInfo}>
+                                <Bot size={22} color="#a87ffb" />
+                                <div style={styles.headerTextWrap}>
+                                    <span style={styles.headerTitle}>Career Advisor GPT</span>
+                                    <span style={styles.headerStatus}>Online & Ready</span>
+                                </div>
+                            </div>
+                            <div style={styles.badgeWrapper}>
+                                <Sparkles size={12} fill="#fcd34d" color="#fcd34d" />
+                                <span style={styles.badgeText}>FAANG Coach Mode</span>
+                            </div>
+                        </div>
 
-                                    <div style={styles.starterGrid}>
-                                        {chatStarters.map((starter, i) => (
-                                            <button
-                                                key={i}
-                                                style={styles.starterCard}
-                                                onClick={() => handleSend(starter.query)}
-                                            >
-                                                <div style={styles.starterIcon}>{starter.icon}</div>
-                                                <span>{starter.label}</span>
-                                            </button>
-                                        ))}
+                        <div style={styles.messagesContainer} className="subtle-scrollbar">
+                            {chatHistory.length === 0 ? (
+                                <div style={styles.welcomeView}>
+                                    <div style={styles.welcomeIcon}><Bot size={40} color="#a87ffb" /></div>
+                                    <h2 style={styles.welcomeTitle}>AI Career Mentor — FAANG Level</h2>
+                                    <p style={styles.welcomeText}>
+                                        Your elite career co-pilot. Paste your resume in the sidebar, then ask me anything — from resume rewrites and skill roadmaps to salary negotiation scripts and system design prep.
+                                    </p>
+                                    <div style={styles.welcomeGrid}>
+                                        <div style={styles.infoCard}>
+                                            <div style={styles.infoIcon}>📌</div>
+                                            <strong>Structured Guidance</strong>
+                                            <p>Every answer includes concrete timelines, before/after examples, and actionable steps — never vague advice.</p>
+                                        </div>
+                                        <div style={styles.infoCard}>
+                                            <div style={styles.infoIcon}>📄</div>
+                                            <strong>Resume-Aware</strong>
+                                            <p>Paste your resume in the sidebar and every response is tailored to your exact background and experience level.</p>
+                                        </div>
+                                        <div style={styles.infoCard}>
+                                            <div style={styles.infoIcon}>💰</div>
+                                            <strong>Salary Negotiation</strong>
+                                            <p>Get market-rate estimates and a word-for-word negotiation script for your next offer.</p>
+                                        </div>
+                                        <div style={styles.infoCard}>
+                                            <div style={styles.infoIcon}>🗺️</div>
+                                            <strong>Career Roadmaps</strong>
+                                            <p>Receive week-by-week learning plans and 2-year career growth maps with specific role targets.</p>
+                                        </div>
                                     </div>
                                 </div>
+                            ) : (
+                                chatHistory.map((msg, idx) => (
+                                    <div key={idx} style={msg.role === "user" ? styles.userRow : styles.botRow}>
+                                        <div style={msg.role === "user" ? styles.userMsg : styles.botMsg}>
+                                            <div style={styles.msgHeader}>
+                                                <span style={styles.msgRole}>
+                                                    {msg.role === "user" ? <User size={12} /> : <Bot size={12} />}
+                                                    {msg.role === "user" ? "You" : "AI Mentor"}
+                                                </span>
+                                            </div>
+                                            <div style={styles.msgContent} className="markdown-content">
+                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
                             )}
 
-                            {chatHistory.map((msg, idx) => (
-                                <div key={idx} style={msg.role === "user" ? styles.userMsgW : styles.botMsgW}>
-                                    <div style={msg.role === "user" ? styles.avatarUser : styles.avatarBot}>
-                                        {msg.role === "user" ? <User size={18} /> : <Bot size={18} />}
-                                    </div>
-                                    <div style={msg.role === "user" ? styles.userMsg : styles.botMsg}>
-                                        <ReactMarkdown>{msg.content}</ReactMarkdown>
-                                    </div>
-                                </div>
-                            ))}
-
                             {isLoading && (
-                                <div style={styles.botMsgW}>
-                                    <div style={styles.avatarBot}><Bot size={18} className="animate-pulse" /></div>
+                                <div style={styles.botRow}>
                                     <div style={styles.botMsg}>
-                                        <div style={styles.typingIndicator} className="typing-indicator">
+                                        <div style={styles.msgHeader}>
+                                            <span style={styles.msgRole}>
+                                                <Bot size={12} /> AI Mentor
+                                            </span>
+                                        </div>
+                                        <div style={styles.typingIndicator}>
                                             <span></span><span></span><span></span>
                                         </div>
                                     </div>
@@ -181,58 +243,83 @@ function AIChatbot() {
                         <div style={styles.inputArea}>
                             <input
                                 style={styles.input}
-                                placeholder="Ask anything about your career..."
+                                placeholder="Type a message or choose a quick prompt..."
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
-                                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                             />
                             <button
                                 style={message.trim() ? styles.sendBtnActive : styles.sendBtn}
                                 onClick={handleSend}
                                 disabled={isLoading || !message.trim()}
                             >
-                                <Send size={20} />
+                                <Send size={18} />
                             </button>
                         </div>
                     </div>
+
                 </div>
             </div>
 
             <style>{`
-                .animate-pulse { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-                @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
-                
                 @keyframes typing {
                     0%, 100% { transform: translateY(0); opacity: 0.4; }
-                    50% { transform: translateY(-5px); opacity: 1; }
+                    50% { transform: translateY(-4px); opacity: 1; }
+                }
+                .typing-indicator {
+                    display: flex;
+                    gap: 5px;
+                    padding: 8px 5px;
+                    align-items: center;
                 }
                 .typing-indicator span {
                     display: inline-block;
                     width: 6px;
                     height: 6px;
-                    background-color: #3b82f6;
+                    background-color: #a87ffb;
                     border-radius: 50%;
                     animation: typing 1s infinite ease-in-out;
                 }
                 .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
                 .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 
+                /* Markdown styling inside bubbles */
+                .markdown-content p {
+                    margin: 0 0 10px 0;
+                    line-height: 1.6;
+                }
+                .markdown-content p:last-child {
+                    margin-bottom: 0;
+                }
+                .markdown-content ul, .markdown-content ol {
+                    margin: 0 0 10px 0;
+                    padding-left: 20px;
+                }
+                .markdown-content li {
+                    margin-bottom: 5px;
+                    line-height: 1.5;
+                }
+                .markdown-content strong {
+                    color: #fff;
+                }
+                .markdown-content code {
+                    background: rgba(255, 255, 255, 0.1);
+                    padding: 2px 5px;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    font-size: 13px;
+                }
+
                 .bg-animate {
-                    background-size: 400% 400%;
-                    animation: gradientBG 15s ease infinite;
+                    background-size: 200% 200%;
+                    animation: bgShift 20s ease-in-out infinite;
                 }
-                @keyframes gradientBG {
-                    0% { background-position: 0% 50%; }
-                    50% { background-position: 100% 50%; }
-                    100% { background-position: 0% 50%; }
-                }
-                .clear-btn-hover:hover {
-                    background: rgba(245, 158, 11, 0.15) !important;
-                    transform: translateY(-2px);
-                    box-shadow: 0 6px 20px rgba(245, 158, 11, 0.2) !important;
+                @keyframes bgShift {
+                    0% { background-position: 0% 0%; }
+                    50% { background-position: 100% 100%; }
+                    100% { background-position: 0% 0%; }
                 }
                 
-                /* Premium Scrollbar */
                 .subtle-scrollbar::-webkit-scrollbar {
                     width: 6px;
                 }
@@ -240,11 +327,11 @@ function AIChatbot() {
                     background: transparent;
                 }
                 .subtle-scrollbar::-webkit-scrollbar-thumb {
-                    background: rgba(255, 255, 255, 0.02);
+                    background: rgba(255, 255, 255, 0.08);
                     border-radius: 10px;
                 }
                 .subtle-scrollbar::-webkit-scrollbar-thumb:hover {
-                    background: rgba(255, 255, 255, 0.05);
+                    background: rgba(255, 255, 255, 0.15);
                 }
             `}</style>
         </div>
@@ -254,113 +341,87 @@ function AIChatbot() {
 const styles = {
     page: {
         minHeight: "100vh",
-        backgroundColor: "#0f172a",
-        backgroundImage: "radial-gradient(circle at top right, #1e293b, #0f172a 70%), radial-gradient(circle at bottom left, #1e1b4b, #0f172a 70%)",
-        fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
-        padding: "100px 20px 40px",
+        backgroundColor: "#050B14",
+        backgroundImage: "radial-gradient(circle at top right, #1e1b4b, #050b14 70%), radial-gradient(circle at bottom left, #0b1528, #050b14 70%)",
         color: "#f8fafc",
+        padding: "90px 20px 30px",
+        fontFamily: "'Outfit', sans-serif",
     },
     container: {
         width: "100%",
-        maxWidth: "1200px",
+        maxWidth: "1300px",
         margin: "0 auto",
-        position: "relative",
-        zIndex: 1,
-    },
-    header: {
-        textAlign: "center",
-        marginBottom: "40px",
-    },
-    titleWrapper: {
+        height: "82vh",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "12px",
-    },
-    title: {
-        fontSize: "42px",
-        fontWeight: "800",
-        letterSpacing: "-0.025em",
-        background: "linear-gradient(to right, #ffffff, #94a3b8)",
-        WebkitBackgroundClip: "text",
-        WebkitTextFillColor: "transparent",
-        margin: "0 0 10px 0",
-    },
-    sparkle: {
-        display: "inline-flex",
-        verticalAlign: "middle",
-        marginLeft: "8px",
-    },
-    subtitle: {
-        fontSize: "18px",
-        color: "#94a3b8",
-        fontWeight: "400",
-        maxWidth: "600px",
-        margin: "0 auto",
-    },
-    statusBadge: {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "8px",
-        background: "rgba(16, 185, 129, 0.1)",
-        border: "1px solid rgba(16, 185, 129, 0.2)",
-        padding: "6px 14px",
-        borderRadius: "20px",
-        fontSize: "13px",
-        color: "#10b981",
-        fontWeight: "600",
-        marginTop: "10px",
-        marginBottom: "15px",
-    },
-    statusDot: {
-        width: "8px",
-        height: "8px",
-        borderRadius: "50%",
-        background: "#10b981",
-        boxShadow: "0 0 10px #10b981",
-        animation: "pulse 2s infinite ease-in-out",
+        flexDirection: "column",
     },
     layout: {
         display: "flex",
         gap: "24px",
-        flexWrap: "wrap",
+        height: "100%",
+        flexWrap: "nowrap",
     },
     sidebar: {
-        background: "rgba(30, 41, 59, 0.4)",
+        width: "320px",
+        background: "rgba(10, 20, 38, 0.5)",
         backdropFilter: "blur(20px)",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-        padding: "20px",
+        border: "1px solid rgba(255, 255, 255, 0.06)",
         borderRadius: "24px",
-        boxShadow: "0 20px 50px rgba(0,0,0,0.4)",
-        height: "580px",
+        padding: "24px",
         display: "flex",
         flexDirection: "column",
-        flex: "1 1 280px",
-        maxWidth: "100%",
+        justifyContent: "space-between",
+        height: "100%",
         boxSizing: "border-box",
+        flexShrink: 0,
     },
     sidebarHeader: {
-        marginBottom: "10px",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        marginBottom: "20px",
     },
-    cardSectionTitle: {
-        margin: "0",
+    sidebarTitle: {
+        margin: 0,
         fontSize: "18px",
+        fontWeight: "700",
+        background: "linear-gradient(to right, #ffffff, #a87ffb)",
+        WebkitBackgroundClip: "text",
+        WebkitTextFillColor: "transparent",
+    },
+    sidebarContent: {
+        flex: 1,
+        overflowY: "auto",
+        display: "flex",
+        flexDirection: "column",
+        gap: "24px",
+        paddingRight: "4px",
+    },
+    contextGroup: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+    },
+    sidebarLabel: {
+        fontSize: "13px",
         fontWeight: "600",
-        color: "#fff",
+        color: "#94a3b8",
+        textTransform: "uppercase",
+        letterSpacing: "0.5px",
     },
     hint: {
-        fontSize: "12px",
-        color: "#94a3b8",
-        marginBottom: "12px",
+        fontSize: "11px",
+        color: "#64748b",
+        margin: 0,
         lineHeight: "1.4",
     },
     textarea: {
-        flex: 1,
+        height: "140px",
         width: "100%",
         padding: "12px",
-        borderRadius: "14px",
-        background: "rgba(15, 23, 42, 0.7)",
-        border: "1px solid rgba(255, 255, 255, 0.1)",
+        borderRadius: "12px",
+        background: "rgba(0, 0, 0, 0.3)",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
         color: "#cbd5e1",
         fontSize: "13px",
         lineHeight: "1.5",
@@ -370,211 +431,266 @@ const styles = {
         fontFamily: "inherit",
         boxSizing: "border-box",
     },
+    shortcutsGroup: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+    },
+    shortcutsList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+    },
+    shortcutBtn: {
+        background: "rgba(255, 255, 255, 0.02)",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
+        padding: "10px 14px",
+        borderRadius: "12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        cursor: "pointer",
+        transition: "all 0.2s ease",
+        color: "#cbd5e1",
+        fontSize: "13px",
+        fontWeight: "500",
+        textAlign: "left",
+    },
     sidebarFooter: {
-        marginTop: "20px",
+        paddingTop: "15px",
+        borderTop: "1px solid rgba(255, 255, 255, 0.05)",
     },
     clearBtn: {
         width: "100%",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: "10px",
-        background: "rgba(245, 158, 11, 0.05)",
-        backdropFilter: "blur(10px)",
-        color: "#fbbf24",
-        border: "1px solid rgba(245, 158, 11, 0.2)",
+        gap: "8px",
+        background: "transparent",
+        color: "#475569",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
         padding: "12px",
-        borderRadius: "14px",
+        borderRadius: "12px",
+        fontSize: "13px",
+        fontWeight: "600",
+        cursor: "not-allowed",
+    },
+    clearBtnActive: {
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "8px",
+        background: "rgba(239, 68, 68, 0.08)",
+        border: "1px solid rgba(239, 68, 68, 0.2)",
+        color: "#f87171",
+        padding: "12px",
+        borderRadius: "12px",
         fontSize: "13px",
         fontWeight: "600",
         cursor: "pointer",
-        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-        boxShadow: "0 4px 15px rgba(245, 158, 11, 0.05)",
+        transition: "all 0.2s ease",
     },
     chatArea: {
-        background: "rgba(30, 41, 59, 0.4)",
+        flex: 1,
+        background: "rgba(10, 20, 38, 0.35)",
         backdropFilter: "blur(20px)",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
+        border: "1px solid rgba(255, 255, 255, 0.06)",
         borderRadius: "24px",
-        boxShadow: "0 20px 50px rgba(0,0,0,0.4)",
         display: "flex",
         flexDirection: "column",
-        height: "580px",
+        height: "100%",
         overflow: "hidden",
-        flex: "1 1 500px",
-        maxWidth: "100%",
+    },
+    chatHeader: {
+        padding: "18px 24px",
+        background: "rgba(0, 0, 0, 0.2)",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    headerInfo: {
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+    },
+    headerTextWrap: {
+        display: "flex",
+        flexDirection: "column",
+    },
+    headerTitle: {
+        fontSize: "15px",
+        fontWeight: "700",
+        color: "#fff",
+    },
+    headerStatus: {
+        fontSize: "11px",
+        color: "#10b981",
+        fontWeight: "500",
+    },
+    badgeWrapper: {
+        background: "rgba(168, 127, 251, 0.1)",
+        border: "1px solid rgba(168, 127, 251, 0.2)",
+        padding: "4px 10px",
+        borderRadius: "12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+    },
+    badgeText: {
+        fontSize: "11px",
+        color: "#a87ffb",
+        fontWeight: "600",
     },
     messagesContainer: {
         flex: 1,
         overflowY: "auto",
+        padding: "24px 30px",
         display: "flex",
         flexDirection: "column",
-        gap: "24px",
-        padding: "32px",
+        gap: "20px",
     },
     welcomeView: {
-        height: "100%",
+        margin: "auto",
+        maxWidth: "500px",
+        textAlign: "center",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
+        gap: "16px",
         padding: "20px",
     },
     welcomeIcon: {
-        width: "80px",
-        height: "80px",
-        background: "rgba(59, 130, 246, 0.1)",
-        borderRadius: "24px",
+        width: "60px",
+        height: "60px",
+        background: "rgba(168, 127, 251, 0.1)",
+        border: "1px solid rgba(168, 127, 251, 0.2)",
+        borderRadius: "18px",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: "20px",
     },
     welcomeTitle: {
-        fontSize: "24px",
-        fontWeight: "700",
-        color: "#fff",
-        margin: "0 0 8px 0",
+        fontSize: "22px",
+        fontWeight: "800",
+        margin: 0,
+        background: "linear-gradient(to right, #fff, #94a3b8)",
+        WebkitBackgroundClip: "text",
+        WebkitTextFillColor: "transparent",
     },
     welcomeText: {
-        fontSize: "16px",
+        fontSize: "14px",
         color: "#94a3b8",
-        marginBottom: "32px",
+        lineHeight: "1.6",
+        margin: 0,
     },
-    starterGrid: {
+    welcomeGrid: {
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
-        gap: "12px",
+        gap: "15px",
         width: "100%",
-        maxWidth: "500px",
+        marginTop: "10px",
     },
-    starterCard: {
-        background: "rgba(255, 255, 255, 0.03)",
-        border: "1px solid rgba(255, 255, 255, 0.06)",
-        padding: "16px",
+    infoCard: {
+        background: "rgba(255, 255, 255, 0.02)",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
         borderRadius: "16px",
-        display: "flex",
-        alignItems: "center",
-        gap: "12px",
-        cursor: "pointer",
-        transition: "all 0.2s",
+        padding: "16px",
         textAlign: "left",
-        color: "#e2e8f0",
-        fontSize: "14px",
-        fontWeight: "500",
     },
-    starterIcon: {
-        color: "#3b82f6",
+    infoIcon: {
+        fontSize: "20px",
+        marginBottom: "8px",
     },
-    userMsgW: {
+    userRow: {
         display: "flex",
-        flexDirection: "row-reverse",
-        gap: "12px",
-        alignItems: "flex-start",
+        justifyContent: "flex-end",
+        width: "100%",
     },
-    botMsgW: {
+    botRow: {
         display: "flex",
-        gap: "12px",
-        alignItems: "flex-start",
-    },
-    avatarUser: {
-        width: "36px",
-        height: "36px",
-        borderRadius: "12px",
-        background: "linear-gradient(135deg, #a87ffb, #7c3aed)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "#fff",
-        flexShrink: 0,
-    },
-    avatarBot: {
-        width: "36px",
-        height: "36px",
-        borderRadius: "12px",
-        background: "rgba(59, 130, 246, 0.2)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "#3b82f6",
-        flexShrink: 0,
-        border: "1px solid rgba(59, 130, 246, 0.3)",
+        justifyContent: "flex-start",
+        width: "100%",
     },
     userMsg: {
-        background: "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
+        background: "linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%)",
+        border: "1px solid rgba(168, 127, 251, 0.2)",
         color: "#fff",
-        padding: "14px 20px",
-        borderRadius: "22px 4px 22px 22px",
-        maxWidth: "85%",
-        fontSize: "15px",
-        lineHeight: "1.6",
-        boxShadow: "0 8px 25px rgba(124, 58, 237, 0.25)",
-        wordBreak: "break-word",
-        overflowWrap: "anywhere",
+        padding: "14px 18px",
+        borderRadius: "20px 20px 4px 20px",
+        maxWidth: "75%",
+        boxShadow: "0 10px 25px -10px rgba(109, 40, 217, 0.3)",
     },
     botMsg: {
-        background: "rgba(255, 255, 255, 0.04)",
-        backdropFilter: "blur(12px)",
+        background: "rgba(255, 255, 255, 0.03)",
+        border: "1px solid rgba(255, 255, 255, 0.06)",
         color: "#e2e8f0",
-        padding: "14px 20px",
-        borderRadius: "4px 22px 22px 22px",
-        maxWidth: "85%",
-        fontSize: "15px",
-        lineHeight: "1.6",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-        wordBreak: "break-word",
-        overflowWrap: "anywhere",
+        padding: "14px 18px",
+        borderRadius: "20px 20px 20px 4px",
+        maxWidth: "75%",
     },
-    typingIndicator: {
+    msgHeader: {
         display: "flex",
-        gap: "4px",
-        padding: "4px 0",
+        alignItems: "center",
+        marginBottom: "8px",
+        fontSize: "11px",
+        color: "#94a3b8",
+        fontWeight: "600",
+    },
+    msgRole: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        textTransform: "uppercase",
+        letterSpacing: "0.5px",
+    },
+    msgContent: {
+        fontSize: "14px",
     },
     inputArea: {
-        padding: "24px 32px",
-        background: "rgba(15, 23, 42, 0.4)",
+        padding: "18px 24px",
+        background: "rgba(0, 0, 0, 0.2)",
         borderTop: "1px solid rgba(255, 255, 255, 0.05)",
         display: "flex",
         gap: "12px",
     },
     input: {
         flex: 1,
-        padding: "16px 20px",
-        borderRadius: "18px",
-        background: "rgba(15, 23, 42, 0.8)",
-        border: "1px solid rgba(255, 255, 255, 0.1)",
+        padding: "14px 18px",
+        borderRadius: "14px",
+        background: "rgba(0, 0, 0, 0.4)",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
         color: "#fff",
-        fontSize: "15px",
+        fontSize: "14px",
         outline: "none",
         transition: "all 0.2s",
     },
     sendBtn: {
-        width: "52px",
-        height: "52px",
-        borderRadius: "18px",
+        width: "48px",
+        height: "48px",
+        borderRadius: "14px",
         border: "none",
-        background: "rgba(59, 130, 246, 0.1)",
-        color: "rgba(59, 130, 246, 0.4)",
+        background: "rgba(255, 255, 255, 0.02)",
+        color: "#475569",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         cursor: "not-allowed",
-        transition: "all 0.2s",
     },
     sendBtnActive: {
-        width: "52px",
-        height: "52px",
-        borderRadius: "18px",
+        width: "48px",
+        height: "48px",
+        borderRadius: "14px",
         border: "none",
-        background: "#3b82f6",
-        color: "#ffffff",
+        background: "linear-gradient(135deg, #a87ffb 0%, #7c3aed 100%)",
+        color: "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         cursor: "pointer",
-        transition: "all 0.2s",
-        boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)",
+        boxShadow: "0 4px 12px rgba(124, 58, 237, 0.3)",
+        transition: "all 0.2s ease",
     }
 };
 

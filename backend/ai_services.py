@@ -1,463 +1,561 @@
-import os
 import json
+import re
+from typing import Any, Optional
+
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from ai_engine import ai_engine
-from job_service import JobService
+
+from ai_engine import ai_engine, ai_errors, AIEngineError
+
+MAX_RESUME_LEN = 5000
+
+
+def _raise_http_from_ai(exc: AIEngineError):
+    status = 503 if exc.code in ("quota_exceeded", "timeout", "network_error", "api_failure") else 400
+    if exc.code in ("missing_api_key", "invalid_api_key", "client_init_failed"):
+        status = 503
+    raise HTTPException(status_code=status, detail=str(exc))
+
+
+def clean_resume_text(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace("\x00", " ")
+    text = re.sub(r"\r\n?", "\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
 
 class AIServices:
-    def __init__(self, db: Session):
+    """Single backend service for all Gemini-powered features."""
+
+    def __init__(self, db: Optional[Session] = None):
         self.db = db
-        self.job_service = JobService(db)
 
-    def generate_interview_questions(self, resume_text: str):
+    def _parse_json_response(self, content: str, feature: str) -> dict:
+        data = ai_engine.safe_json_loads(content)
+        if not data:
+            err = AIEngineError("Failed to parse AI response as valid JSON", "invalid_json")
+            _raise_http_from_ai(err)
+        return data
+
+    # ---------------- RESUME ANALYZER ---------------- #
+
+    def analyze_resume_text(self, resume_text: str) -> dict[str, Any]:
+        cleaned = clean_resume_text(resume_text)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Resume text is empty or could not be extracted")
+
         prompt = f"""
-        Based on the following resume content, generate 15 to 20 personalized interview questions.
-        Provide a healthy mix across these categories: 'Technical', 'Project-based', 'Behavioral', and 'HR'.
-        Format the response in JSON as follows:
-        {{
-            "questions": [
-                {{"category": "Technical", "question": "...", "answer": "..."}},
-                ...
-            ]
-        }}
-        
-        Resume:
-        {resume_text[:3000]}
-        """
+Analyze this resume for ATS compatibility and career fit.
+
+Return JSON with this exact structure:
+{{
+  "profile_overview": {{
+    "strength": "Overall profile strength",
+    "experience_level": "Entry-level | Mid-level | Senior",
+    "domain": "Primary professional domain"
+  }},
+  "score_breakdown": {{
+    "skills": 0,
+    "experience": 0,
+    "keywords": 0,
+    "formatting": 0,
+    "grammar": 0
+  }},
+  "detailed_summary": {{
+    "key_strengths": ["..."],
+    "missing_skills": ["..."],
+    "improvement_suggestions": ["..."],
+    "ats_optimization": ["..."],
+    "job_suitability": ["..."]
+  }},
+  "summary": "Detailed analytical summary (300-500 words). No contact details.",
+  "ats_score": 0,
+  "job_recommendations": [
+    {{
+      "title": "Job Title",
+      "company": "Example Corp",
+      "match_percentage": 0,
+      "location": "Remote",
+      "experience_level": "Mid-level",
+      "description": "Short role description"
+    }}
+  ],
+  "strengths": ["skill or strength"],
+  "weaknesses": ["gap or weakness"],
+  "formatting_suggestions": ["..."],
+  "keyword_optimization": ["..."],
+  "industry_suggestions": ["..."]
+}}
+
+Resume:
+{cleaned[:MAX_RESUME_LEN]}
+"""
         try:
             content = ai_engine.generate_content(
-                prompt=prompt,
-                system_instruction="You are a specialized AI Interviewer. Return only valid JSON. Ensure each question has a suggested 'answer'.",
+                prompt,
+                system_instruction="You are an expert ATS resume analyst. Output only valid JSON.",
                 json_mode=True,
-                resume_context=resume_text
+                feature="Resume Analysis",
             )
-            return json.loads(content)
-        except Exception as e:
-            print(f"Interview generation error: {e}")
-            # Fallback when API key is invalid or server is down
-            fallback_questions = [
-                {"category": "Behavioral", "question": "Can you walk me through your background and the specific experiences highlighted in your resume?", "answer": "Focus on your timeline and specifically link past achievements to the skills required for the target role."},
-                {"category": "Behavioral", "question": "Tell me about a time you had to overcome a significant challenge in one of your projects.", "answer": "Use the STAR method (Situation, Task, Action, Result). Focus heavily on the 'Action' and 'Result' parts, highlighting your problem-solving process."},
-                {"category": "Technical", "question": "Based on your tech stack, how do you ensure the scalability and security of the applications you build?", "answer": "Discuss caching, load balancing, proper database indexing, and avoiding common security pitfalls (like OWASP Top 10 vulnerabilities)."},
-                {"category": "Technical", "question": "Can you explain a complex technical concept you worked on recently to me as if I were a beginner?", "answer": "Use an analogy. Avoid jargon and focus on the 'why' and 'how' at a high level. Ensure you verify understanding midway."},
-                {"category": "Project-based", "question": "Let's discuss the most impactful project on your resume. What was your specific contribution, and what was the outcome?", "answer": "Quantify your results. If you improved performance, say 'by X%'. Clearly distinguish your work from the team's overall work."},
-                {"category": "Project-based", "question": "If you could go back and redo one of your past projects, what would you do differently and why?", "answer": "Show continuous improvement. Mention recognizing architectural mistakes early, adding testing sooner, or improving documentation."},
-                {"category": "HR", "question": "Where do you see yourself technically and professionally in the next three to five years?", "answer": "Align your personal goals with the trajectory of the role you're interviewing for. E.g., stepping into a technical lead or deep-dive specialist role."},
-                {"category": "HR", "question": "What type of team culture and management style do you thrive in best?", "answer": "Describe a healthy, collaborative environment. Avoid complaining about past managers; focus on positives like 'autonomy paired with clear goals'."},
-                {"category": "Technical", "question": "How do you keep your technical skills updated in such a fast-paced industry?", "answer": "Mention specific blogs, open-source contributions, playing with new tech on weekends, or attending conferences/meetups."},
-                {"category": "Behavioral", "question": "Describe a time when you received constructive criticism. How did you handle it?", "answer": "Show humility and a growth mindset. Explain how you listened without defensiveness, asked clarifying questions, and applied the feedback."}
-            ]
-            return {"questions": fallback_questions}
+            result = self._parse_json_response(content, "Resume Analysis")
+            if "summary" not in result or "ats_score" not in result:
+                raise HTTPException(status_code=502, detail="AI response missing required resume analysis fields")
+            result["resume_text"] = cleaned
+            return result
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
 
-    def chat_with_mentor(self, message: str, resume_data: dict, chat_history: list = None):
-        resume_text = resume_data.get("resume_text", "")
-        
-        # Performance optimization: if resume text is massive, truncate it
-        resume_context = resume_text[:2000] if resume_text else "No resume content provided yet."
+    def generate_editing_suggestions(self, resume_text: str) -> list[str]:
+        cleaned = clean_resume_text(resume_text)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Resume text is empty")
 
-        system_prompt = f"""
-        You are an AI Resume Mentor that helps users understand and improve their resumes. 
-        Your goal is to provide world-class career guidance, resume critiques, skill development roadmaps, and interview preparation.
-
-        CONTEXT:
-        --- User's Resume ---
-        {resume_context}
-
-        INSTRUCTIONS:
-        1.  Explain things in simple and clear English so that beginners can understand.
-        2.  Answer questions based only on the information in the provided resume.
-        3.  When providing an analysis or critique, ALWAYS generate three distinct sections:
-            - **Strengths**: Highlight positive aspects like strong skills, projects, or achievements.
-            - **Improvements**: Suggest specific ways to make the resume clearer, stronger, or more impactful.
-            - **Missing Skills**: List important skills or technologies commonly expected for the user's field but not present.
-        4.  If the user asks to "rewrite a project" or "improve a description", provide a more professional and impactful version of their content.
-        5.  Keep responses concise but insightful. Use Markdown (bolding, bullet points) to make the chat readable.
-        6.  Be encouraging, professional, and empathetic.
-        7.  If the user's message is unrelated to careers or their resume, politely steer them back.
-        """
-        
-        # Prepare conversation history
-        messages = [{"role": "system", "content": system_prompt}]
-        if chat_history:
-            # Only take the last 10 messages to keep context window clean
-            messages.extend(chat_history[-10:])
-            
-        messages.append({"role": "user", "content": message})
-        
-        try:
-            content = ai_engine.generate_content(
-                prompt=message,
-                system_instruction=system_prompt,
-                json_mode=False,
-                resume_context=resume_text
-            )
-            return {"reply": content}
-        except Exception as e:
-            print(f"Chatbot error: {e}")
-            return {"reply": "### ⚠️ AI Engine Connection Issue\nI'm having trouble connecting to my specialized AI brain right now. \n\n**Common fixes:**\n1. Ensure your API keys in the `backend/.env` file are valid.\n2. Try refreshing the page and clearing your conversation.\n3. If you don't have a key, I'll automatically try to use my **Basic Mode** to give you general advice!"}
-
-    def generate_editing_suggestions(self, resume_text: str):
         prompt = f"""
-        You are an AI Resume Writing Assistant. Your task is to analyze the resume text and give useful suggestions to improve it.
-        While giving suggestions, you must always copy the exact sentence from the resume and show it as original_text.
-        Do not change, rewrite, or summarize the original sentence.
-        Then provide a better and more professional version of that same sentence as suggested_text, and also give a short reason explaining why the improvement is helpful.
-        The original_text must exactly match the sentence from the resume so that it can be correctly identified and updated in the resume editor.
-        Do not create new sentences that are not present in the resume.
-        Provide a JSON array of suggestions in this format:
-        {{
-            "suggestions": [
-                {{"id": 1, "original_text": "...", "suggested_text": "...", "reason": "...", "action_type": "rewrite"}},
-                {{"id": 2, "original_text": "...", "suggested_text": "", "reason": "...", "action_type": "remove"}}
-            ]
-        }}
-        Provide around 3 to 7 high-impact suggestions.
-        
-        Resume Text:
-        {resume_text[:3000]}
-        """
+Provide 3-5 specific, actionable resume improvement suggestions.
+Return JSON: {{"suggestions": ["suggestion 1", "suggestion 2"]}}
+
+Resume:
+{cleaned[:2000]}
+"""
         try:
             content = ai_engine.generate_content(
-                prompt=prompt,
-                system_instruction="You are a Resume Editing Assistant. Output only valid JSON.",
+                prompt,
+                system_instruction="You are a top-tier resume reviewer. Output only valid JSON.",
                 json_mode=True,
-                resume_context=resume_text
+                feature="Resume Suggestions",
             )
-            return json.loads(content)
-        except Exception as e:
-            print(f"Editing suggestion error: {e}")
-            fallback_suggestions = [
-                {
-                    "id": 1,
-                    "original_text": "Responsible for managing the team and talking to stakeholders on a daily basis.",
-                    "suggested_text": "Spearheaded a cross-functional team and successfully managed daily stakeholder communications.",
-                    "reason": "Using stronger action verbs ('Spearheaded', 'managed') makes your experience sound much more impactful.",
-                    "action_type": "rewrite"
-                },
-                {
-                    "id": 2,
-                    "original_text": "Helped to make the website load much faster.",
-                    "suggested_text": "Optimized web application performance, significantly reducing page load times.",
-                    "reason": "Quantify your achievements if possible, but at least use professional terminology like 'Optimized' rather than 'Helped to make'.",
-                    "action_type": "rewrite"
-                },
-                {
-                    "id": 3,
-                    "original_text": "In my free time I like to play video games and read books.",
-                    "suggested_text": "",
-                    "reason": "Hobbies are generally unnecessary on a professional resume unless they directly relate to the job role or show leadership.",
-                    "action_type": "remove"
-                }
-            ]
-            return {"suggestions": fallback_suggestions}
+            data = self._parse_json_response(content, "Resume Suggestions")
+            suggestions = data.get("suggestions", [])
+            if not suggestions:
+                raise HTTPException(status_code=502, detail="AI returned no suggestions")
+            return suggestions
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
 
-    def generate_bullet_point(self, sentence: str):
-        prompt = f"""
-        You are an expert Resume Writer. Take the following simple sentence describing a work achievement or project and expand it into a professional, impactful resume bullet point.
-        Use strong action verbs and imply measurable results or specific technologies where appropriate.
-        Return ONLY valid JSON in this format:
-        {{
-            "bullet_point": "..."
-        }}
-        
-        Sentence: "{sentence}"
-        """
-        try:
-            content = ai_engine.generate_content(
-                prompt=prompt,
-                system_instruction="You are an expert Resume Writer. Output ONLY valid JSON.",
-                json_mode=True
-            ).strip()
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-            content = content.strip()
-            
-            data = json.loads(content)
-            if "bullet_point" not in data:
-                raise ValueError("Missing 'bullet_point' key")
-            return data
-        except Exception as e:
-            print(f"Bullet point error: {e}")
-            return {"bullet_point": f"Developed and optimized solutions for '{sentence}', resulting in increased overall efficiency and improved project outcomes."}
-
-    def detect_skill_gaps(self, resume_text: str, target_role: str = "Software Engineer"):
-        prompt = f"""
-        Analyze this resume text against the typical requirements for a '{target_role}'.
-        Identify exactly 5 crucial skills or technologies that are MISSING from the resume but are highly requested in the industry for this role.
-        Return ONLY valid JSON in this format:
-        {{
-            "missing_skills": ["Skill1", "Skill2", "Skill3", ...]
-        }}
-        
-        Resume Text:
-        {resume_text[:2000]}
-        """
-        try:
-            content = ai_engine.generate_content(
-                prompt=prompt,
-                system_instruction="You are a Technical Recruiter AI. Output ONLY valid JSON.",
-                json_mode=True
-            ).strip()
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-            content = content.strip()
-
-            data = json.loads(content)
-            if "missing_skills" not in data:
-                raise ValueError("Missing 'missing_skills' key")
-            return data
-        except Exception as e:
-            print(f"Skill gap error: {e}")
-            return {"missing_skills": ["TypeScript", "CI/CD Pipelines", "Docker", "AWS/Cloud", "System Design"]}
-
-    def rewrite_section(self, text: str, mode: str):
-        mode_instruction = {
-            "professional": "Make it much more highly professional, corporate, and polished.",
-            "concise": "Make it extremely concise, punchy, and straight to the point without losing key facts.",
-            "ats": "Optimize it heavily for ATS tracking systems by ensuring standard keywords and clear syntax.",
-            "grammar": "Fix all grammar, spelling, and clarity issues perfectly while keeping the original meaning."
-        }.get(mode, "Make it more professional.")
+    def parse_resume_to_sections(self, resume_text: str) -> dict:
+        cleaned = clean_resume_text(resume_text)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Resume text is empty")
 
         prompt = f"""
-        Rewrite the following resume section.
-        Instruction Context: {mode_instruction}
-        
-        Return ONLY valid JSON in this format:
-        {{
-            "rewritten_text": "..."
-        }}
-        
-        Original Text:
-        "{text}"
-        """
+Split this resume into structured JSON sections:
+{{
+  "personal_information": {{"name":"","email":"","phone":"","linkedin":"","location":""}},
+  "summary": "",
+  "skills": [],
+  "education": "",
+  "projects": "",
+  "experience": "",
+  "certifications": ""
+}}
+
+Resume:
+{cleaned[:4000]}
+"""
         try:
             content = ai_engine.generate_content(
-                prompt=prompt,
-                system_instruction="You are a master Resume Editor. Output exactly what is requested in valid JSON.",
-                json_mode=True
-            ).strip()
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-            content = content.strip()
-
-            data = json.loads(content)
-            if "rewritten_text" not in data:
-                raise ValueError("Missing 'rewritten_text' key")
-            return data
-        except Exception as e:
-            print(f"Rewrite error: {e}")
-            return {"rewritten_text": f"Optimized version of: {text}"}
-
-    def calculate_ats_score(self, resume_text: str):
-        prompt = f"""
-        Calculate an ATS (Applicant Tracking System) compatibility score from 0 to 100 for this resume.
-        Evaluate based on structure, keyword density, clarity, and formatting.
-        Also provide 3 short, actionable suggestions to improve the score.
-        Return ONLY valid JSON:
-        {{
-            "score": 85,
-            "suggestions": ["Add more keywords", "Remove tables", "..."]
-        }}
-        
-        Resume:
-        {resume_text[:3000]}
-        """
-        try:
-            content = ai_engine.generate_content(
-                prompt=prompt,
-                system_instruction="You are an ATS Scoring constraints analyzer. Output ONLY valid JSON.",
-                json_mode=True
-            ).strip()
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-            content = content.strip()
-
-            data = json.loads(content)
-            if "score" not in data or "suggestions" not in data:
-                raise ValueError("Missing 'score' or 'suggestions' key")
-            return data
-        except Exception as e:
-            print(f"ATS error: {e}")
+                prompt,
+                system_instruction="Output only valid JSON.",
+                json_mode=True,
+                feature="Resume Parser",
+            )
+            data = self._parse_json_response(content, "Resume Parser")
             return {
-                "score": 72,
-                "suggestions": [
-                    "Ensure you use standard section headers like 'Experience' and 'Education'.",
-                    "Add more quantifiable metrics (%, $, numbers) to your bullet points.",
-                    "Include more hard technical skills matching your target job titles."
-                ]
+                "personal_information": data.get("personal_information", {}),
+                "summary": data.get("summary", ""),
+                "skills": data.get("skills", []),
+                "education": data.get("education", ""),
+                "projects": data.get("projects", ""),
+                "experience": data.get("experience", ""),
+                "certifications": data.get("certifications", ""),
             }
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
 
-    def parse_resume_to_sections(self, resume_text: str):
+    def calculate_ats_score(self, resume_text: str) -> dict:
+        cleaned = clean_resume_text(resume_text)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Resume text is empty")
+
         prompt = f"""
-        You are a resume parsing assistant for an AI Resume Editor application.
+Score this resume for ATS compatibility.
+Return JSON: {{"score": 0, "suggestions": ["..."]}}
 
-        When a user uploads a resume, analyze the entire resume text and intelligently separate the content into structured sections. Do NOT place the entire resume into the summary field.
-
-        Extract and classify the information into the following sections:
-
-        1. Personal Information
-        (Name, Email, Phone Number, LinkedIn, Portfolio, Location)
-
-        2. Summary or Objective
-        (A short professional summary describing the candidate)
-
-        3. Skills
-        (List all technical and soft skills. Return them as an array.)
-
-        4. Education
-        (University name, degree, year, and relevant academic details)
-
-        5. Projects
-        (Project names, technologies used, and descriptions)
-
-        6. Work Experience
-        (Company name, role, responsibilities, duration)
-
-        7. Certifications
-        (Professional certifications, courses, or training)
-
-        Instructions:
-
-        • Detect common resume headings such as "Summary", "Skills", "Education", "Projects", "Experience", and "Certifications".
-        • If headings are missing, intelligently classify the text based on its meaning.
-        • Do NOT mix content from different sections.
-        • Skills must be returned as a list.
-        • Personal information must only contain contact details.
-        • If a section is not present in the resume, return an empty value for that section.
-
-        Return the result ONLY in this JSON format:
-
-        {{
-        "personal_information": {{
-        "name": "",
-        "email": "",
-        "phone": "",
-        "linkedin": "",
-        "location": ""
-        }},
-        "summary": "",
-        "skills": [],
-        "education": "",
-        "projects": "",
-        "experience": "",
-        "certifications": ""
-        }}
-
-        The output must strictly follow this structure so that the Resume Editor UI can automatically populate each section correctly.
-        
-        Resume Text:
-        {resume_text[:4000]}
-        """
+Resume:
+{cleaned[:MAX_RESUME_LEN]}
+"""
         try:
             content = ai_engine.generate_content(
-                prompt=prompt,
-                system_instruction="You are an expert Resume Parser. Output ONLY valid JSON with exactly the specified keys.",
-                json_mode=True
-            ).strip()
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-            content = content.strip()
+                prompt,
+                system_instruction="Output only valid JSON.",
+                json_mode=True,
+                feature="ATS Score",
+            )
+            return self._parse_json_response(content, "ATS Score")
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
 
-            data = json.loads(content)
-            required_keys = ["personal_information", "summary", "skills", "experience", "education", "projects", "certifications"]
-            if "reply" in data and not any(k in data for k in required_keys):
-                raise ValueError("Got generic reply, fallback needed")
-                
-            for key in required_keys:
-                if key not in data:
-                    if key == "skills":
-                        data[key] = []
-                    elif key == "personal_information":
-                        data[key] = {"name": "", "email": "", "phone": "", "linkedin": "", "location": ""}
-                    else:
-                        data[key] = ""
+    def generate_bullet_point(self, sentence: str) -> dict:
+        if not sentence or not sentence.strip():
+            raise HTTPException(status_code=400, detail="Sentence is empty")
+
+        prompt = f"""
+Convert this into a strong resume bullet point with measurable impact.
+Return JSON: {{"bullet_point": ""}}
+
+Sentence: {sentence.strip()}
+"""
+        try:
+            content = ai_engine.generate_content(
+                prompt,
+                system_instruction="Output only valid JSON.",
+                json_mode=True,
+                feature="Bullet Point Generator",
+            )
+            data = self._parse_json_response(content, "Bullet Point Generator")
+            if "bullet_point" not in data:
+                raise HTTPException(status_code=502, detail="Invalid AI response for bullet point")
             return data
-        except Exception as e:
-            print(f"Parse error: {e}")
-            return self._heuristic_parse_resume(resume_text)
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
 
-    def _heuristic_parse_resume(self, text: str):
-        parsed = {
-            "summary": "",
-            "experience": "",
-            "education": "",
-            "projects": "",
-            "certifications": ""
-        }
-        personal_info = {"name": "", "email": "", "phone": "", "linkedin": "", "location": ""}
-        skills_list = []
-        
-        lines = text.split('\n')
-        current_section = "personal_information"
-        
-        for line in lines:
-            tl = line.lower().strip()
-            if not tl: 
-                continue
-                
-            # Detect headers
-            if tl in ["skills", "technical skills", "technologies", "core competencies"]:
-                current_section = "skills"
-                continue
-            elif tl in ["experience", "work experience", "employment", "professional experience", "history"]:
-                current_section = "experience"
-                continue
-            elif tl in ["education", "academic background", "academics"]:
-                current_section = "education"
-                continue
-            elif tl in ["projects", "personal projects", "academic projects"]:
-                current_section = "projects"
-                continue
-            elif tl in ["certifications", "licenses", "awards", "courses"]:
-                current_section = "certifications"
-                continue
-            elif tl in ["summary", "objective", "profile", "about me", "professional summary"]:
-                current_section = "summary"
-                continue
-                
-            if current_section == "personal_information":
-                # Rough logic: anything looking like an email, put in email
-                if "@" in tl:
-                    personal_info["email"] = line.strip()
-                elif sum(c.isdigit() for c in tl) > 6:
-                    personal_info["phone"] = line.strip()
-                elif "linkedin" in tl:
-                    personal_info["linkedin"] = line.strip()
-                elif len(personal_info["name"]) == 0 and len(tl) < 30:
-                     personal_info["name"] = line.strip()
+    def detect_skill_gaps(self, resume_text: str, target_role: str = "Software Engineer") -> dict:
+        cleaned = clean_resume_text(resume_text)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Resume text is empty")
+
+        prompt = f"""
+Identify missing skills for the target role.
+Return JSON: {{"missing_skills": ["skill1", "skill2"]}}
+
+Target role: {target_role}
+
+Resume:
+{cleaned[:2000]}
+"""
+        try:
+            content = ai_engine.generate_content(
+                prompt,
+                system_instruction="Output only valid JSON.",
+                json_mode=True,
+                feature="Skill Gap Analysis",
+            )
+            return self._parse_json_response(content, "Skill Gap Analysis")
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
+
+    def rewrite_section(self, text: str, mode: str) -> dict:
+        if not text or not text.strip():
+            raise HTTPException(status_code=400, detail="Text is empty")
+
+        instructions = {
+            "professional": "Make it professional and impact-focused",
+            "concise": "Make it shorter while keeping impact",
+            "ats": "Optimize for ATS keyword matching",
+            "grammar": "Fix grammar and clarity",
+        }.get(mode, "Improve clarity and impact")
+
+        prompt = f"""
+Rewrite the text below.
+Instruction: {instructions}
+Return JSON: {{"rewritten_text": ""}}
+
+Text:
+{text}
+"""
+        try:
+            content = ai_engine.generate_content(
+                prompt,
+                system_instruction="Output only valid JSON.",
+                json_mode=True,
+                feature="Resume Rewriter",
+            )
+            return self._parse_json_response(content, "Resume Rewriter")
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
+
+    # ---------------- AI MENTOR ---------------- #
+
+    def chat_with_mentor(
+        self,
+        message: str,
+        resume_data: Optional[dict] = None,
+        chat_history: Optional[list] = None,
+    ) -> dict:
+        if not message or not message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+        resume_text = clean_resume_text((resume_data or {}).get("resume_text", ""))[:MAX_RESUME_LEN]
+        system_prompt = (
+            "You are an elite FAANG-level career mentor with 15+ years of experience in tech hiring. "
+            "Provide deep, structured, actionable guidance. Never give vague or generic advice. "
+            "Always tailor your response to the candidate's specific background.\n\n"
+            "Your expertise covers:\n"
+            "- Resume optimization and ATS strategies\n"
+            "- Interview coaching (technical, behavioral, system design)\n"
+            "- Skill gap identification and learning roadmaps\n"
+            "- Salary negotiation tactics\n"
+            "- Career pivots and promotions\n"
+            "- Job search strategy and networking\n\n"
+            "Format responses with:\n"
+            "- ## Headings for major sections\n"
+            "- Bullet points for actionable items\n"
+            "- 📌 Priority markers for urgent actions\n"
+            "- Concrete timelines (e.g. 'Week 1-2: ...')\n"
+            "- Real examples and metrics where possible\n\n"
+            "IMPORTANT: Always give COMPLETE responses. Never truncate or say 'continued below'."
+        )
+        if resume_text:
+            system_prompt += f"\n\n---\n**Candidate's Resume:**\n{resume_text}\n---"
+
+        try:
+            reply = ai_engine.chat(
+                message=message.strip(),
+                system_instruction=system_prompt,
+                chat_history=chat_history or [],
+                feature="AI Mentor",
+            )
+            return {"reply": reply}
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
+
+    # ---------------- INTERVIEW PREP ---------------- #
+
+    def generate_interview_questions(
+        self,
+        resume_text: str = "",
+        target_role: str = "Software Engineer",
+    ) -> dict:
+        cleaned = clean_resume_text(resume_text)
+        context = cleaned[:MAX_RESUME_LEN] if cleaned else "No resume provided. Generate general role-based questions."
+
+        prompt = f"""Generate exactly 20 interview questions for a {target_role} candidate.
+
+STRICT DISTRIBUTION — you MUST follow this exactly:
+- 10 Technical questions (category: "Technical")
+- 5 Behavioral questions (category: "Behavioral")
+- 5 HR questions (category: "HR")
+
+Total = 20 questions. Do NOT generate fewer.
+
+For each question include:
+- "category": "Technical" | "Behavioral" | "HR"
+- "difficulty": "easy" | "medium" | "hard"
+- "question": the interview question text
+- "answer": a strong, specific sample answer (3-5 sentences)
+- "explanation": why this question is asked and what interviewers look for (2-3 sentences)
+
+Technical questions should test hands-on skills, code design, and problem solving relevant to {target_role}.
+Behavioral questions should use the STAR method (Situation, Task, Action, Result).
+HR questions should cover motivation, career goals, salary, and culture fit.
+
+Return ONLY valid JSON in this exact format:
+{{
+  "questions": [
+    {{
+      "category": "Technical",
+      "difficulty": "easy",
+      "question": "...",
+      "answer": "...",
+      "explanation": "..."
+    }}
+  ]
+}}
+
+Resume context:
+{context}
+"""
+        try:
+            content = ai_engine.generate_content(
+                prompt,
+                system_instruction="You are an expert interview coach. Output only valid JSON with exactly 20 questions.",
+                json_mode=True,
+                feature="Interview Prep",
+            )
+            data = self._parse_json_response(content, "Interview Prep")
+            questions = data.get("questions", [])
+
+            # --- Enforce minimum counts by category ---
+            by_cat: dict[str, list] = {"Technical": [], "Behavioral": [], "HR": []}
+            for q in questions:
+                cat = q.get("category", "Technical")
+                if cat in by_cat:
+                    by_cat[cat].append(q)
                 else:
-                    # switch to summary if it's getting long
-                    current_section = "summary"
-                    parsed["summary"] += line + "\n"
-                continue
-                
-            if current_section == "skills" or ("react" in tl or "python" in tl or "javascript" in tl or "java" in tl or "sql" in tl) and len(line) < 50:
-                 if current_section != "projects" and current_section != "experience":
-                    skills_list.extend([s.strip() for s in line.split(',') if s.strip()])
-                    continue
+                    by_cat["Technical"].append(q)
 
-            # Append to current section
-            if current_section == "skills":
-                skills_list.extend([s.strip() for s in line.split(',') if s.strip()])
+            tech_defaults = [
+                "Explain the difference between REST and GraphQL APIs.",
+                "What is the time complexity of binary search?",
+                "How does garbage collection work in your primary language?",
+                "Describe the CAP theorem and give a real-world example.",
+                "What are SOLID principles? Give one concrete example.",
+                "How would you design a URL shortener system at scale?",
+                "What is the difference between a process and a thread?",
+                "Explain database indexing and when you would use a composite index.",
+                "What is Big-O notation? Compare O(n log n) vs O(n²).",
+                "How do you handle race conditions in concurrent code?",
+            ]
+            beh_defaults = [
+                "Tell me about a time you disagreed with a team member and how you resolved it.",
+                "Describe a project where you had to meet a very tight deadline.",
+                "Give an example of when you took initiative without being asked.",
+                "Tell me about a significant failure and what you learned from it.",
+                "Describe how you prioritize tasks when multiple deadlines compete.",
+            ]
+            hr_defaults = [
+                "Why do you want to work at our company specifically?",
+                "Where do you see yourself professionally in 5 years?",
+                "What are your salary expectations for this role?",
+                "How do you handle constructive feedback and criticism?",
+                "What makes you the best candidate for this position?",
+            ]
+
+            def _pad(cat_list, defaults, target_count, cat_label):
+                while len(cat_list) < target_count:
+                    idx = len(cat_list) % len(defaults)
+                    cat_list.append({
+                        "category": cat_label,
+                        "difficulty": "medium",
+                        "question": defaults[idx],
+                        "answer": "Provide a specific, structured answer using concrete examples from your experience.",
+                        "explanation": "This is a standard interview question to assess your fit, skills, and preparation level.",
+                    })
+                return cat_list[:target_count]
+
+            by_cat["Technical"] = _pad(by_cat["Technical"], tech_defaults, 10, "Technical")
+            by_cat["Behavioral"] = _pad(by_cat["Behavioral"], beh_defaults, 5, "Behavioral")
+            by_cat["HR"] = _pad(by_cat["HR"], hr_defaults, 5, "HR")
+
+            final_questions = by_cat["Technical"] + by_cat["Behavioral"] + by_cat["HR"]
+            return {"questions": final_questions, "target_role": target_role, "total": len(final_questions)}
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
+
+    def simulate_interview_chat(
+        self,
+        message: str,
+        chat_history: Optional[list],
+        resume_text: str,
+        category: str = "Technical",
+    ) -> dict:
+        cleaned = clean_resume_text(resume_text)[:MAX_RESUME_LEN]
+        system_prompt = f"""
+You are a FAANG interviewer running a {category} mock interview.
+Return ONLY JSON with this shape:
+{{
+  "evaluation": "",
+  "ideal_answer": "",
+  "tips": [],
+  "common_mistakes": [],
+  "next_question": ""
+}}
+
+Resume context:
+{cleaned}
+"""
+        user_prompt = message.strip() if message and message.strip() else "Start the interview with the first question."
+
+        try:
+            if chat_history:
+                content = ai_engine.chat(
+                    message=user_prompt,
+                    system_instruction=system_prompt,
+                    chat_history=chat_history,
+                    feature="Mock Interview",
+                )
             else:
-                parsed[current_section] += line + "\n"
-                
-        # Cleanup
-        for k in parsed:
-            parsed[k] = parsed[k].strip()
-                
-        # Remove empty skills
+                content = ai_engine.generate_content(
+                    user_prompt,
+                    system_instruction=system_prompt,
+                    json_mode=True,
+                    feature="Mock Interview",
+                )
+
+            data = ai_engine.safe_json_loads(content)
+            if not data:
+                raise HTTPException(status_code=502, detail="Invalid mock interview response from AI")
+            return data
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
+
+    # ---------------- JOB AI HELPERS ---------------- #
+
+    def compare_resume_to_job(self, resume_text: str, job_desc: str) -> dict:
+        cleaned = clean_resume_text(resume_text)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Resume text is empty")
+
+        prompt = f"""
+Compare this resume with the job description.
+
+Return JSON:
+{{
+  "matched_skills": ["skill1"],
+  "missing_skills": ["skill2"],
+  "explanation": "Brief match explanation",
+  "suggestions": ["Improvement suggestion"]
+}}
+
+Resume:
+{cleaned[:1500]}
+
+Job Description:
+{(job_desc or "")[:1500]}
+"""
+        try:
+            content = ai_engine.generate_content(
+                prompt,
+                system_instruction="You are an expert job matching assistant. Output only valid JSON.",
+                json_mode=True,
+                feature="Job Match Analysis",
+            )
+            data = self._parse_json_response(content, "Job Match Analysis")
+            return {
+                "matched_skills": data.get("matched_skills", []),
+                "missing_skills": data.get("missing_skills", []),
+                "explanation": data.get("explanation", ""),
+                "suggestions": data.get("suggestions", []),
+            }
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
+
+    def analyze_market_trends(self, descriptions: str) -> dict:
+        if not descriptions or not descriptions.strip():
+            return {"trending_skills": [], "analysis": "No job data available."}
+
+        prompt = f"""
+Analyze aggregated job descriptions and identify trending skills.
+
+Return JSON:
+{{
+  "trending_skills": ["skill1", "skill2"],
+  "analysis": "2-3 sentence market overview"
+}}
+
+Descriptions:
+{descriptions[:3000]}
+"""
+        try:
+            content = ai_engine.generate_content(
+                prompt,
+                system_instruction="You are a job market analyst. Output only valid JSON.",
+                json_mode=True,
+                feature="Market Trends",
+            )
+            return self._parse_json_response(content, "Market Trends")
+        except AIEngineError as e:
+            _raise_http_from_ai(e)
+
+    def get_diagnostics(self) -> dict:
+        test = ai_engine.test_connection()
         return {
-            "personal_information": personal_info,
-            "summary": parsed["summary"],
-            "skills": [s for s in skills_list if s],
-            "experience": parsed["experience"],
-            "education": parsed["education"],
-            "projects": parsed["projects"],
-            "certifications": parsed["certifications"]
+            **test,
+            "provider": "Google Gemini (AI Studio)",
+            "default_model": ai_engine.gemini_model,
+            "embedding_model": ai_engine.embedding_model,
+            "recent_errors": ai_errors,
         }

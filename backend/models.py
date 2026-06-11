@@ -20,14 +20,21 @@ class ResumeHistory(Base):
     ats_score = Column(Integer)
     job_recommendation_summary = Column(String)
     report_filename = Column(String)
+    resume_text = Column(String, nullable=True)
 
 class JobPosting(Base):
     __tablename__ = "job_postings"
 
-    id = Column(Integer, primary_key=True, index=True)
-    company_name = Column(String)
+    id = Column(String, primary_key=True, index=True)
     job_title = Column(String)
-    job_location = Column(String)
-    job_url = Column(String)
+    company_name = Column(String)
     job_description = Column(String)
+    job_location = Column(String)
+    salary = Column(String, nullable=True)
+    skills = Column(String) # Store as JSON string or comma-separated
+    source = Column(String)
+    job_url = Column(String)
     posted_date = Column(String)
+    duration = Column(String, nullable=True)
+    job_type = Column(String, nullable=True)
+

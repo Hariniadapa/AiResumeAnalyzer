@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AIParticles from "../components/AIParticles";
 import Navbar from "../components/Navbar";
+import { API_BASE_URL } from "../config/api";
 
 function Dashboard() {
   const [file, setFile] = useState(null);
@@ -37,7 +38,7 @@ function Dashboard() {
       setIsAnalyzing(true);
       console.log("Sending request...");
 
-      const response = await fetch("http://127.0.0.1:8000/upload/", {
+      const response = await fetch(`${API_BASE_URL}/upload/`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,

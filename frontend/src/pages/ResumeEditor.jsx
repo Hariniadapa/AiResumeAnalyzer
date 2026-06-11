@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import Navbar from "../components/Navbar";
 import AIParticles from "../components/AIParticles";
+import { API_BASE_URL } from "../config/api";
 
 function ResumeEditor() {
     const [token] = useState(localStorage.getItem("token"));
@@ -41,7 +42,7 @@ function ResumeEditor() {
             if (raw.length > 50 && alreadyParsed !== raw) {
                 setLoadingTool("parsing");
                 try {
-                    const res = await fetch("http://127.0.0.1:8000/resume/parse-sections/", {
+                    const res = await fetch(`${API_BASE_URL}/resume/parse-sections/`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
                         body: JSON.stringify({ resume_text: raw })
@@ -109,7 +110,7 @@ function ResumeEditor() {
         setLoadingTool(`rewriting_${sectionKey}`);
         setToolError("");
         try {
-            const res = await fetch("http://127.0.0.1:8000/resume/rewrite-section/", {
+            const res = await fetch(`${API_BASE_URL}/resume/rewrite-section/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
                 body: JSON.stringify({ text: resumeSections[sectionKey], mode: mode })
@@ -137,7 +138,7 @@ function ResumeEditor() {
         setToolResult("");
         setToolError("");
         try {
-            const res = await fetch("http://127.0.0.1:8000/resume/generate-bullet/", {
+            const res = await fetch(`${API_BASE_URL}/resume/generate-bullet/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
                 body: JSON.stringify({ sentence: toolInput })
@@ -162,7 +163,7 @@ function ResumeEditor() {
         setSkillGaps([]);
         try {
             const fullText = Object.values(resumeSections).join(" ");
-            const res = await fetch("http://127.0.0.1:8000/resume/skill-gap/", {
+            const res = await fetch(`${API_BASE_URL}/resume/skill-gap/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
                 body: JSON.stringify({ resume_text: fullText, target_role: toolInput || "Software Engineer" })
@@ -187,7 +188,7 @@ function ResumeEditor() {
         setAtsData(null);
         try {
             const fullText = Object.values(resumeSections).join("\n\n");
-            const res = await fetch("http://127.0.0.1:8000/resume/ats-score/", {
+            const res = await fetch(`${API_BASE_URL}/resume/ats-score/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
                 body: JSON.stringify({ resume_text: fullText })

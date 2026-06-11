@@ -1,11 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const AIParticles = () => {
-    const [particles, setParticles] = useState([]);
-
-    useEffect(() => {
-        // Generate 20 random particles
-        const generatedParticles = Array.from({ length: 20 }).map((_, i) => ({
+    const [particles] = useState(() =>
+        Array.from({ length: 20 }).map((_, i) => ({
             id: i,
             size: Math.random() * 4 + 2, // 2px to 6px
             left: Math.random() * 100, // 0% to 100%
@@ -13,9 +10,8 @@ const AIParticles = () => {
             duration: Math.random() * 20 + 10, // 10s to 30s
             delay: Math.random() * 5, // 0s to 5s
             opacity: Math.random() * 0.4 + 0.1, // 0.1 to 0.5
-        }));
-        setParticles(generatedParticles);
-    }, []);
+        }))
+    );
 
     return (
         <div
