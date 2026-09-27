@@ -242,15 +242,24 @@ def recommend_jobs(data: dict, db: Session = Depends(get_db), user: str = Depend
         if latest and latest.resume_text:
             resume_text = latest.resume_text
             print(f"[Jobs Recommend] Loaded resume text from history for user {user}")
+        else:
+            latest_any = db.query(ResumeHistory).order_by(ResumeHistory.id.desc()).first()
+            if latest_any and latest_any.resume_text:
+                resume_text = latest_any.resume_text
+                print(f"[Jobs Recommend] Loaded latest resume text fallback for user {user}")
             
     if not resume_text:
         # Return empty list to prevent downstream exceptions with empty string
         return []
 
-    return JobService(db).match_resume_to_jobs(
-        resume_text=resume_text,
-        location=data.get("location", None),
-        skills=data.get("skills", None),
-        experience_level=data.get("experience_level", None)
-    )
+    try:
+        return JobService(db).match_resume_to_jobs(
+            resume_text=resume_text,
+            location=data.get("location", None),
+            skills=data.get("skills", None),
+            experience_level=data.get("experience_level", None)
+        )
+    except Exception as e:
+        print(f"[Jobs Recommend ERROR] Recommendation failed: {e}")
+        return []
 

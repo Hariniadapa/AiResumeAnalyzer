@@ -45,7 +45,9 @@ class AIEngine:
         # Gemini config
         self.gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-        self.embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
+        self.embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001")
+        if "text-embedding-004" in self.embedding_model:
+            self.embedding_model = "models/gemini-embedding-001"
         self.gemini_client: Optional[genai.Client] = None
         
         # OpenAI config
@@ -104,6 +106,10 @@ class AIEngine:
                 return func()
             except Exception as e:
                 last_exception = e
+                err_str = str(e).lower()
+                if "404" in err_str or "not found" in err_str or "not_found" in err_str or "invalid" in err_str:
+                    print(f"[AI RETRY] Non-retryable error ({e}). Skipping retry.")
+                    raise e
                 print(f"[AI RETRY] Attempt {attempt + 1} failed: {e}")
                 if attempt < retries - 1:
                     time.sleep(delay * (2 ** attempt))
@@ -261,7 +267,8 @@ class AIEngine:
                 def call_gemini_embed():
                     response = self.gemini_client.models.embed_content(
                         model=self.embedding_model,
-                        contents=text[:8000]
+                        contents=text[:8000],
+                        config=types.EmbedContentConfig(output_dimensionality=768)
                     )
                     return list(response.embeddings[0].values)
                 return self._retry_with_backoff(call_gemini_embed)
